@@ -1,0 +1,32 @@
+{
+  "users": [
+    { "id": 1, "name": "Alice", "email": "alice@example.com", "status": "active", "age": 30, "deleted_at": null },
+    { "id": 2, "name": "Bob", "email": "bob@example.com", "status": "inactive", "age": 25, "deleted_at": "2023-01-01T10:00:00Z" },
+    { "id": 3, "name": "Charlie", "email": "charlie@example.com", "status": "active", "age": 35, "deleted_at": null }
+  ],
+  "posts": [
+    { "id": 101, "user_id": 1, "title": "Introduction to JSONQL", "views": 150, "published": true },
+    { "id": 102, "user_id": 1, "title": "Advanced Querying", "views": 300, "published": true },
+    { "id": 103, "user_id": 2, "title": "Why I left REST", "views": 50, "published": false }
+  ],
+  "comments": [
+    { "id": 1001, "post_id": 101, "user_id": 2, "content": "Great intro!", "approved": true },
+    { "id": 1002, "post_id": 101, "user_id": 3, "content": "Needs more examples.", "approved": true },
+    { "id": 1003, "post_id": 102, "user_id": 2, "content": "I don't get it.", "approved": false }
+  ],
+  "products": [
+    { "id": "p1", "name": "Laptop", "category": "electronics", "price": 999.99, "in_stock": true, "rating": 4.5 },
+    { "id": "p2", "name": "Smartphone", "category": "electronics", "price": 699.99, "in_stock": true, "rating": 4.8 },
+    { "id": "p3", "name": "Coffee Mug", "category": "kitchen", "price": 15.00, "in_stock": true, "rating": 4.2 },
+    { "id": "p4", "name": "Headphones", "category": "electronics", "price": 199.99, "in_stock": false, "rating": 4.0 }
+  ],
+  "orders": [
+    { "id": "o1", "user_id": 1, "total": 1014.99, "status": "completed", "created_at": "2023-02-01T10:00:00Z" },
+    { "id": "o2", "user_id": 3, "total": 15.00, "status": "pending", "created_at": "2023-02-02T11:00:00Z" }
+  ],
+  "widgets": [
+    { "id": 1, "name": "Gear", "properties": { "material": "steel", "weight": 10 } },
+    { "id": 2, "name": "Spring", "properties": { "material": "steel", "weight": 5 } },
+    { "id": 3, "name": "Bolt", "properties": { "material": "iron", "weight": 2 } }
+  ]
+}

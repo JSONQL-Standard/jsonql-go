@@ -1,4 +1,4 @@
-package jsonql
+package jsonql_test
 
 import (
 	"encoding/json"
@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jsonql-standard/jsonql-go"
 )
 
 // TestCase matches the structure of the JSON compliance tests
@@ -20,13 +22,9 @@ type TestCase struct {
 
 func TestCompliance(t *testing.T) {
 	// Define the root path to the compliance suites
-	// Allow overriding via environment variable for CI/CD
-	suitesPath := os.Getenv("JSONQL_SPEC_PATH")
-	if suitesPath == "" {
-		suitesPath = "../jsonql-spec"
-	}
-	suitesPath = filepath.Join(suitesPath, "tests/suites")
-	
+	// Use local fixtures
+	suitesPath := "fixtures/suites"
+
 	absPath, _ := filepath.Abs(suitesPath)
 
 	if _, err := os.Stat(suitesPath); os.IsNotExist(err) {
@@ -45,11 +43,11 @@ func TestCompliance(t *testing.T) {
 			t.Fatalf("Failed to parse test file %s: %v", path, err)
 		}
 
-		parser := NewParser()
+		parser := jsonql.NewParser()
 
 		for _, tc := range tests {
 			t.Run(tc.ID, func(t *testing.T) {
-				err := parser.Parse(tc.Query)
+				_, err := parser.Parse(tc.Query, nil, "")
 
 				// Determine if the test expects validity
 				expectValid := true

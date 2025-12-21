@@ -18,9 +18,14 @@ func NewParser() *Parser {
 }
 
 // Parse parses and validates a JSONQL query from a raw map
-func (p *Parser) Parse(input map[string]interface{}) (*JSONQLQuery, error) {
-	// Convert map to JSON bytes then to struct to leverage struct tags
-	// This is a bit inefficient but safe. Optimization can come later.
+func (p *Parser) Parse(input map[string]interface{}, schema *JSONQLSchema, table string) (*JSONQLQuery, error) {
+	// Pre-validation...
+	if fields, ok := input["fields"]; ok {
+		if fieldsArr, ok := fields.([]interface{}); ok && len(fieldsArr) == 0 {
+			return nil, errors.New("Fields array cannot be empty")
+		}
+	}
+
 	bytes, err := json.Marshal(input)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal input: %w", err)
@@ -33,6 +38,13 @@ func (p *Parser) Parse(input map[string]interface{}) (*JSONQLQuery, error) {
 
 	if err := p.Validate(&query); err != nil {
 		return nil, err
+	}
+
+	if schema != nil {
+		v := NewValidator(schema, table)
+		if err := v.Validate(&query); err != nil {
+			return nil, err
+		}
 	}
 
 	return &query, nil

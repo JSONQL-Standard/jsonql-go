@@ -1,0 +1,9 @@
+{
+  "widgets": {
+    "fields": {
+      "id": { "type": "integer" },
+      "name": { "type": "string" },
+      "properties": { "type": "json" }
+    }
+  }
+}

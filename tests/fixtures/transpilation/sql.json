@@ -1,0 +1,35 @@
+[
+  {
+    "id": "sql-001",
+    "description": "Basic Select",
+    "tableName": "users",
+    "query": {
+      "version": "1.0",
+      "fields": ["id", "name"]
+    },
+    "expectedSQL": "SELECT id, name FROM users"
+  },
+  {
+    "id": "sql-002",
+    "description": "Select All",
+    "tableName": "products",
+    "query": {
+      "version": "1.0"
+    },
+    "expectedSQL": "SELECT * FROM products"
+  },
+  {
+    "id": "sql-003",
+    "description": "Basic Where Equality",
+    "tableName": "users",
+    "query": {
+      "version": "1.0",
+      "fields": ["id"],
+      "where": {
+        "status": { "eq": "active" }
+      }
+    },
+    "expectedSQL": "SELECT id FROM users WHERE status = ?",
+    "expectedArgs": ["active"]
+  }
+]

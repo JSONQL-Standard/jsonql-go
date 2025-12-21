@@ -1,11 +1,12 @@
-package jsonql
+package jsonql_test
 
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"reflect"
 	"testing"
+
+	"github.com/jsonql-standard/jsonql-go"
 )
 
 type TranspilationTestCase struct {
@@ -18,10 +19,9 @@ type TranspilationTestCase struct {
 }
 
 func TestTranspilation(t *testing.T) {
-	// Try to find the spec file relative to the test file
-	// Assuming we are running from jsonql-go root
-	specPath := "../jsonql-spec/tests/transpilation/sql.json"
-	
+	// Use local fixtures
+	specPath := "fixtures/transpilation/sql.json"
+
 	// Check if file exists
 	if _, err := os.Stat(specPath); os.IsNotExist(err) {
 		t.Skipf("Spec file not found at %s, skipping tests", specPath)
@@ -37,13 +37,13 @@ func TestTranspilation(t *testing.T) {
 		t.Fatalf("Failed to parse transpilation tests: %v", err)
 	}
 
-	parser := NewParser()
-	transpiler := NewTranspiler("sqlite")
+	parser := jsonql.NewParser()
+	transpiler := jsonql.NewTranspiler("sqlite")
 
 	for _, tc := range tests {
 		t.Run(tc.ID, func(t *testing.T) {
 			// Parse the raw query map into our struct
-			query, err := parser.Parse(tc.Query)
+			query, err := parser.Parse(tc.Query, nil, tc.TableName)
 			if err != nil {
 				t.Fatalf("Parsing failed: %v", err)
 			}
@@ -56,7 +56,7 @@ func TestTranspilation(t *testing.T) {
 			if result.SQL != tc.ExpectedSQL {
 				t.Errorf("Expected SQL: '%s', got: '%s'", tc.ExpectedSQL, result.SQL)
 			}
-			
+
 			if len(tc.ExpectedArgs) > 0 {
 				if len(result.Args) != len(tc.ExpectedArgs) {
 					t.Errorf("Expected %d args, got %d", len(tc.ExpectedArgs), len(result.Args))
@@ -67,8 +67,8 @@ func TestTranspilation(t *testing.T) {
 						// Simple equality check might fail for int vs float64
 						if !reflect.DeepEqual(arg, tc.ExpectedArgs[i]) {
 							// Try converting to float64 for comparison if numbers
-							val1 := toFloat(arg)
-							val2 := toFloat(tc.ExpectedArgs[i])
+							val1 := toFloatPtr(arg)
+							val2 := toFloatPtr(tc.ExpectedArgs[i])
 							if val1 != nil && val2 != nil && *val1 == *val2 {
 								continue
 							}
@@ -81,7 +81,7 @@ func TestTranspilation(t *testing.T) {
 	}
 }
 
-func toFloat(v interface{}) *float64 {
+func toFloatPtr(v interface{}) *float64 {
 	var f float64
 	switch i := v.(type) {
 	case float64:

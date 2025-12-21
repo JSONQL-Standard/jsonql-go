@@ -1,0 +1,32 @@
+[
+  {
+    "id": "sec-sql-inj-001",
+    "description": "SQL Injection in field name",
+    "query": {
+      "fields": ["id", "name; DROP TABLE users;--"]
+    },
+    "valid": false,
+    "expectedError": "Invalid field name"
+  },
+  {
+    "id": "sec-sql-inj-002",
+    "description": "SQL Injection in value (should be parameterized)",
+    "tableName": "users",
+    "query": {
+      "where": {
+        "name": { "eq": "admin' OR '1'='1" }
+      }
+    },
+    "valid": true,
+    "expectedResult": []
+  },
+  {
+    "id": "sec-sql-inj-003",
+    "description": "SQL Injection in sort",
+    "query": {
+      "sort": "id; DROP TABLE users;--"
+    },
+    "valid": false,
+    "expectedError": "Invalid sort field"
+  }
+]

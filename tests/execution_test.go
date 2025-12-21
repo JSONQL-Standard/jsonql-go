@@ -1,16 +1,16 @@
-package jsonql
+package jsonql_test
 
 import (
-	"database/sql"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
-	_ "modernc.org/sqlite"
+	"github.com/jsonql-standard/jsonql-go"
+	"github.com/jsonql-standard/jsonql-go/drivers/sqlite"
 )
 
 type ExecutionTestCase struct {
@@ -23,11 +23,7 @@ type ExecutionTestCase struct {
 
 func TestExecution(t *testing.T) {
 	// 1. Load Data
-	specPath := os.Getenv("JSONQL_SPEC_PATH")
-	if specPath == "" {
-		specPath = "../jsonql-spec"
-	}
-	dataPath := filepath.Join(specPath, "tests/suites/standard/data.json")
+	dataPath := "fixtures/suites/standard/data.json"
 	
 	dataBytes, err := os.ReadFile(dataPath)
 	if err != nil {
@@ -40,11 +36,13 @@ func TestExecution(t *testing.T) {
 	}
 
 	// 2. Setup DB
-	db, err := sql.Open("sqlite", ":memory:")
+	driver, err := sqlite.NewDriver(":memory:")
 	if err != nil {
 		t.Fatalf("Failed to open in-memory DB: %v", err)
 	}
-	defer db.Close()
+	defer driver.Close()
+
+	ctx := context.Background()
 
 	// 3. Create Tables and Insert Data
 	for tableName, rows := range dataset {
@@ -79,7 +77,7 @@ func TestExecution(t *testing.T) {
 		}
 
 		createSQL := fmt.Sprintf("CREATE TABLE %s (%s)", tableName, strings.Join(colDefs, ", "))
-		if _, err := db.Exec(createSQL); err != nil {
+		if _, err := driver.Execute(ctx, createSQL, nil); err != nil {
 			t.Fatalf("Failed to create table %s: %v", tableName, err)
 		}
 
@@ -91,25 +89,30 @@ func TestExecution(t *testing.T) {
 		insertSQL := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", 
 			tableName, strings.Join(colNames, ", "), strings.Join(placeholders, ", "))
 
-		stmt, err := db.Prepare(insertSQL)
-		if err != nil {
-			t.Fatalf("Failed to prepare insert for %s: %v", tableName, err)
-		}
-		defer stmt.Close()
-
 		for _, row := range rows {
 			var args []interface{}
 			for _, col := range colNames {
-				args = append(args, row[col])
+				val := row[col]
+				if val != nil {
+					switch val.(type) {
+					case map[string]interface{}, []interface{}:
+						b, _ := json.Marshal(val)
+						args = append(args, string(b))
+					default:
+						args = append(args, val)
+					}
+				} else {
+					args = append(args, nil)
+				}
 			}
-			if _, err := stmt.Exec(args...); err != nil {
+			if _, err := driver.Execute(ctx, insertSQL, args); err != nil {
 				t.Fatalf("Failed to insert row into %s: %v", tableName, err)
 			}
 		}
 	}
 
 	// 4. Run Tests
-	execTestPath := filepath.Join(specPath, "tests/suites/standard/tests/execution.json")
+	execTestPath := "fixtures/suites/standard/tests/execution.json"
 	execBytes, err := os.ReadFile(execTestPath)
 	if err != nil {
 		t.Fatalf("Execution tests not found at %s", execTestPath)
@@ -120,20 +123,27 @@ func TestExecution(t *testing.T) {
 		t.Fatalf("Failed to parse execution tests: %v", err)
 	}
 
-	transpiler := NewTranspiler()
+	parser := jsonql.NewParser()
+	transpiler := jsonql.NewTranspiler("sqlite")
 
 	for _, tc := range tests {
 		t.Run(tc.ID, func(t *testing.T) {
+			// Parse
+			query, err := parser.Parse(tc.Query, nil, tc.TableName)
+			if err != nil {
+				t.Fatalf("Parsing failed: %v", err)
+			}
+
 			// Transpile
-			sqlStr, args, err := transpiler.Transpile(tc.Query, tc.TableName)
+			result, err := transpiler.Transpile(query, tc.TableName)
 			if err != nil {
 				t.Fatalf("Transpilation failed: %v", err)
 			}
 
 			// Execute
-			rows, err := db.Query(sqlStr, args...)
+			rows, err := driver.Query(ctx, result.SQL, result.Args)
 			if err != nil {
-				t.Fatalf("Execution failed: %v\nSQL: %s\nArgs: %v", err, sqlStr, args)
+				t.Fatalf("Execution failed: %v\nSQL: %s\nArgs: %v", err, result.SQL, result.Args)
 			}
 			defer rows.Close()
 

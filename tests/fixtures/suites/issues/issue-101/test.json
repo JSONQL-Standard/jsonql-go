@@ -1,0 +1,16 @@
+[
+  {
+    "id": "issue-101-json-filter",
+    "description": "Filtering inside JSON column (Issue #101)",
+    "query": {
+      "from": "widgets",
+      "where": {
+        "properties.material": "steel"
+      }
+    },
+    "expectedResult": [
+      { "id": 1, "name": "Gear" },
+      { "id": 2, "name": "Spring" }
+    ]
+  }
+]

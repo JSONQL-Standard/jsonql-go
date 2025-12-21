@@ -1,0 +1,51 @@
+[
+  {
+    "id": "exec-001",
+    "description": "Select all active users",
+    "tableName": "users",
+    "query": {
+      "fields": ["id", "name"],
+      "where": {
+        "status": { "eq": "active" }
+      },
+      "sort": "id"
+    },
+    "expectedResult": [
+      { "id": 1, "name": "Alice" },
+      { "id": 3, "name": "Charlie" }
+    ]
+  },
+  {
+    "id": "exec-002",
+    "description": "Select products with price > 100",
+    "tableName": "products",
+    "query": {
+      "fields": ["name", "price"],
+      "where": {
+        "price": { "gt": 100 }
+      },
+      "sort": "price"
+    },
+    "expectedResult": [
+      { "name": "Headphones", "price": 199.99 },
+      { "name": "Smartphone", "price": 699.99 },
+      { "name": "Laptop", "price": 999.99 }
+    ]
+  },
+  {
+    "id": "exec-003",
+    "description": "Select posts by user 1",
+    "tableName": "posts",
+    "query": {
+      "fields": ["title"],
+      "where": {
+        "user_id": { "eq": 1 }
+      },
+      "sort": "id"
+    },
+    "expectedResult": [
+      { "title": "Introduction to JSONQL" },
+      { "title": "Advanced Querying" }
+    ]
+  }
+]

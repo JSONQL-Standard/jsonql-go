@@ -1,0 +1,58 @@
+[
+  {
+    "id": "adv-agg-001",
+    "description": "Aggregation with grouping",
+    "schema": {
+      "orders": {
+        "fields": {
+          "total": { "type": "number" },
+          "status": { "type": "string" }
+        }
+      }
+    },
+    "query": {
+      "from": "orders",
+      "aggregate": {
+        "total_sales": { "sum": "total" }
+      },
+      "groupBy": ["status"],
+      "sort": "status"
+    },
+    "expectedResult": [
+      { "status": "completed", "total_sales": 1014.99 },
+      { "status": "pending", "total_sales": 15.00 }
+    ],
+    "valid": true
+  },
+  {
+    "id": "adv-rel-001",
+    "description": "Deeply nested relationship inclusion",
+    "schema": {
+      "users": {
+        "fields": { "id": { "type": "integer" } },
+        "relations": { "posts": { "type": "hasMany", "target": "posts" } }
+      },
+      "posts": {
+        "fields": { "id": { "type": "integer" }, "user_id": { "type": "integer" } },
+        "relations": { "comments": { "type": "hasMany", "target": "comments" } }
+      },
+      "comments": {
+        "fields": { "id": { "type": "integer" }, "post_id": { "type": "integer" }, "approved": { "type": "boolean" } }
+      }
+    },
+    "query": {
+      "from": "users",
+      "include": {
+        "posts": {
+          "include": {
+            "comments": {
+              "where": { "approved": true }
+            }
+          }
+        }
+      },
+      "sort": "id"
+    },
+    "valid": true
+  }
+]

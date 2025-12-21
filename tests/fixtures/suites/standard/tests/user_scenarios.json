@@ -1,0 +1,53 @@
+[
+  {
+    "id": "user-issue-101",
+    "description": "Filtering by null values (Reported by @user123)",
+    "schema": {
+      "users": {
+        "fields": {
+          "deleted_at": { "type": "timestamp", "nullable": true }
+        }
+      }
+    },
+    "query": {
+      "from": "users",
+      "where": {
+        "deleted_at": null
+      },
+      "sort": "id"
+    },
+    "expectedResult": [
+      { "id": 1, "name": "Alice", "deleted_at": null },
+      { "id": 3, "name": "Charlie", "deleted_at": null }
+    ],
+    "valid": true
+  },
+  {
+    "id": "user-scenario-ecommerce",
+    "description": "Complex product search with price range and category",
+    "schema": {
+      "products": {
+        "fields": {
+          "category": { "type": "string" },
+          "price": { "type": "number" },
+          "in_stock": { "type": "boolean" },
+          "rating": { "type": "number" }
+        }
+      }
+    },
+    "query": {
+      "from": "products",
+      "where": {
+        "category": "electronics",
+        "price": { "gte": 100, "lte": 1000 },
+        "in_stock": true
+      },
+      "sort": ["-rating", "price"]
+    },
+    "expectedResult": [
+      { "name": "Smartphone", "price": 699.99, "rating": 4.8 },
+      { "name": "Laptop", "price": 999.99, "rating": 4.5 }
+    ],
+    "valid": true
+  }
+]
