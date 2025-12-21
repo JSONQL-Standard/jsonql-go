@@ -22,90 +22,115 @@ type TranspileResult struct {
 }
 
 // Transpile converts a parsed query object to a SQL string and arguments
-func (t *Transpiler) Transpile(query *JSONQLQuery, tableName string) (*TranspileResult, error) {
+func (t *Transpiler) Transpile(query *JSONQLQuery, tableName string, schema *JSONQLSchema) (*TranspileResult, error) {
 	if !isValidIdentifier(tableName) {
 		return nil, fmt.Errorf("Invalid table name: %s", tableName)
 	}
 
 	var args []interface{}
+	var selectParts []string
+	var joinParts []string
+	var whereConditions []string
 
-	// 1. SELECT clause
-	selectClause := "*"
+	// 1. SELECT clause (Main Table)
 	if len(query.Fields) > 0 {
-		var cols []string
 		for _, f := range query.Fields {
 			if !isValidIdentifier(f) {
 				return nil, fmt.Errorf("Invalid field name: %s", f)
 			}
-			cols = append(cols, t.quoteIdentifier(f))
+			selectParts = append(selectParts, fmt.Sprintf("%s.%s", t.quoteIdentifier(tableName), t.quoteIdentifier(f)))
 		}
-		selectClause = strings.Join(cols, ", ")
 	}
 
-	// 2. FROM clause
-	sqlStr := fmt.Sprintf("SELECT %s FROM %s", selectClause, t.quoteIdentifier(tableName))
-
-	// 3. WHERE clause
-	if query.Where != nil {
-		var conditions []string
-		for field, cond := range query.Where {
-			if !isValidIdentifier(field) {
-				return nil, fmt.Errorf("Invalid field name in where clause: %s", field)
+	// Handle Aggregates (Main Table)
+	if len(query.Aggregate) > 0 {
+		for alias, aggDef := range query.Aggregate {
+			if !isValidIdentifier(alias) {
+				return nil, fmt.Errorf("Invalid aggregate alias: %s", alias)
 			}
 
-			// Check if it's a map (operators) or value (equality)
-			if valMap, ok := cond.(map[string]interface{}); ok {
-				// Handle operators: "field": { "gt": 10 }
-				if v, ok := valMap["eq"]; ok {
-					conditions = append(conditions, fmt.Sprintf("%s = ?", t.quoteIdentifier(field)))
-					args = append(args, v)
+			aggMap, ok := aggDef.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("Invalid aggregate definition for %s", alias)
+			}
+
+			for funcName, field := range aggMap {
+				fieldName, ok := field.(string)
+				if !ok {
+					return nil, fmt.Errorf("Invalid aggregate field for %s", alias)
 				}
-				if v, ok := valMap["neq"]; ok {
-					conditions = append(conditions, fmt.Sprintf("%s != ?", t.quoteIdentifier(field)))
-					args = append(args, v)
+
+				// Validate funcName
+				validFuncs := map[string]bool{"sum": true, "count": true, "avg": true, "min": true, "max": true}
+				if !validFuncs[funcName] {
+					return nil, fmt.Errorf("Invalid aggregate function: %s", funcName)
 				}
-				if v, ok := valMap["gt"]; ok {
-					conditions = append(conditions, fmt.Sprintf("%s > ?", t.quoteIdentifier(field)))
-					args = append(args, v)
-				}
-				if v, ok := valMap["gte"]; ok {
-					conditions = append(conditions, fmt.Sprintf("%s >= ?", t.quoteIdentifier(field)))
-					args = append(args, v)
-				}
-				if v, ok := valMap["lt"]; ok {
-					conditions = append(conditions, fmt.Sprintf("%s < ?", t.quoteIdentifier(field)))
-					args = append(args, v)
-				}
-				if v, ok := valMap["lte"]; ok {
-					conditions = append(conditions, fmt.Sprintf("%s <= ?", t.quoteIdentifier(field)))
-					args = append(args, v)
-				}
-				if v, ok := valMap["like"]; ok {
-					conditions = append(conditions, fmt.Sprintf("%s LIKE ?", t.quoteIdentifier(field)))
-					args = append(args, v)
-				}
-				if v, ok := valMap["in"]; ok {
-					if slice, ok := v.([]interface{}); ok && len(slice) > 0 {
-						placeholders := make([]string, len(slice))
-						for i := range slice {
-							placeholders[i] = "?"
-							args = append(args, slice[i])
-						}
-						conditions = append(conditions, fmt.Sprintf("%s IN (%s)", t.quoteIdentifier(field), strings.Join(placeholders, ", ")))
+
+				if fieldName == "*" && funcName == "count" {
+					selectParts = append(selectParts, fmt.Sprintf("COUNT(*) AS %s", t.quoteIdentifier(alias)))
+				} else {
+					if !isValidIdentifier(fieldName) {
+						return nil, fmt.Errorf("Invalid aggregate field: %s", fieldName)
 					}
+					selectParts = append(selectParts, fmt.Sprintf("%s(%s.%s) AS %s", strings.ToUpper(funcName), t.quoteIdentifier(tableName), t.quoteIdentifier(fieldName), t.quoteIdentifier(alias)))
 				}
-			} else {
-				// Handle simple equality: "field": "value"
-				conditions = append(conditions, fmt.Sprintf("%s = ?", t.quoteIdentifier(field)))
-				args = append(args, cond)
 			}
-		}
-		if len(conditions) > 0 {
-			sqlStr += " WHERE " + strings.Join(conditions, " AND ")
 		}
 	}
 
-	// 4. SORT clause
+	// 2. Process Joins (Recursive)
+	if len(query.Include) > 0 {
+		if schema == nil {
+			return nil, fmt.Errorf("Schema is required for relationships")
+		}
+		
+		// Start recursion with root table info
+		err := t.processJoin(query.Include, tableName, tableName, "", schema, &selectParts, &joinParts, &whereConditions, &args)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	selectClause := "*"
+	if len(selectParts) > 0 {
+		selectClause = strings.Join(selectParts, ", ")
+	}
+
+	// 3. FROM clause
+	fromClause := t.quoteIdentifier(tableName)
+	if len(joinParts) > 0 {
+		fromClause += " " + strings.Join(joinParts, " ")
+	}
+
+	sqlStr := fmt.Sprintf("SELECT %s FROM %s", selectClause, fromClause)
+
+	// 4. WHERE clause (Main Table)
+	if query.Where != nil {
+		conds, newArgs, err := t.processWhere(query.Where, tableName)
+		if err != nil {
+			return nil, err
+		}
+		whereConditions = append(whereConditions, conds...)
+		args = append(args, newArgs...)
+	}
+
+	if len(whereConditions) > 0 {
+		sqlStr += " WHERE " + strings.Join(whereConditions, " AND ")
+	}
+
+	// 5. GROUP BY clause
+	if len(query.GroupBy) > 0 {
+		var groups []string
+		for _, g := range query.GroupBy {
+			if !isValidIdentifier(g) {
+				return nil, fmt.Errorf("Invalid group by field: %s", g)
+			}
+			groups = append(groups, fmt.Sprintf("%s.%s", t.quoteIdentifier(tableName), t.quoteIdentifier(g)))
+		}
+		sqlStr += " GROUP BY " + strings.Join(groups, ", ")
+	}
+
+	// 6. SORT clause
 	if len(query.Sort) > 0 {
 		var sortParts []string
 		for _, s := range query.Sort {
@@ -123,12 +148,12 @@ func (t *Transpiler) Transpile(query *JSONQLQuery, tableName string) (*Transpile
 			if desc {
 				order = "DESC"
 			}
-			sortParts = append(sortParts, fmt.Sprintf("%s %s", t.quoteIdentifier(field), order))
+			sortParts = append(sortParts, fmt.Sprintf("%s.%s %s", t.quoteIdentifier(tableName), t.quoteIdentifier(field), order))
 		}
 		sqlStr += " ORDER BY " + strings.Join(sortParts, ", ")
 	}
 
-	// 5. LIMIT / OFFSET
+	// 7. LIMIT / OFFSET
 	if query.Limit != nil {
 		sqlStr += fmt.Sprintf(" LIMIT %d", *query.Limit)
 	}
@@ -145,6 +170,243 @@ func (t *Transpiler) Transpile(query *JSONQLQuery, tableName string) (*Transpile
 		SQL:  sqlStr,
 		Args: args,
 	}, nil
+}
+
+func (t *Transpiler) processJoin(
+	include map[string]interface{}, 
+	parentTable string, 
+	parentAlias string,
+	hydratorPath string, // e.g. "items", "items___product"
+	schema *JSONQLSchema, 
+	selectParts *[]string, 
+	joinParts *[]string,
+	whereConditions *[]string,
+	args *[]interface{},
+) error {
+	tableDef, ok := schema.Tables[parentTable]
+	if !ok {
+		return fmt.Errorf("Table definition not found for %s", parentTable)
+	}
+
+	for relName, relConfig := range include {
+		relation, ok := tableDef.Relations[relName]
+		if !ok {
+			return fmt.Errorf("Relation %s not found on table %s", relName, parentTable)
+		}
+
+		targetTable := relName
+		if relation.Table != "" {
+			targetTable = relation.Table
+		}
+
+		// Generate unique alias for this join
+		// If parentAlias is root (tableName), alias is relName
+		// Else alias is parentAlias_relName
+		var currentTableAlias string
+		var currentHydratorPath string
+		
+		if hydratorPath == "" {
+			currentTableAlias = relName
+			currentHydratorPath = relName
+		} else {
+			currentTableAlias = parentAlias + "_" + relName
+			currentHydratorPath = hydratorPath + "___" + relName
+		}
+
+		relMap, ok := relConfig.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("Invalid include configuration for %s", relName)
+		}
+
+		// Parse included fields
+		if fields, ok := relMap["fields"].([]interface{}); ok {
+			for _, f := range fields {
+				fieldName, ok := f.(string)
+				if ok {
+					// Alias: currentHydratorPath___fieldName
+					alias := fmt.Sprintf("%s___%s", currentHydratorPath, fieldName)
+					*selectParts = append(*selectParts, fmt.Sprintf("%s.%s AS %s", t.quoteIdentifier(currentTableAlias), t.quoteIdentifier(fieldName), t.quoteIdentifier(alias)))
+				}
+			}
+		}
+
+		// Handle Aggregates (Subqueries)
+		if aggMap, ok := relMap["aggregate"].(map[string]interface{}); ok {
+			for alias, aggDef := range aggMap {
+				defMap, ok := aggDef.(map[string]interface{})
+				if !ok {
+					continue // Skip invalid
+				}
+				for funcName, field := range defMap {
+					fieldName, ok := field.(string)
+					if !ok {
+						continue
+					}
+					
+					// Build Subquery
+					// SELECT func(field) FROM targetTable WHERE joinCond AND whereCond
+					
+					// We need a unique alias for the subquery table to avoid collision with the main join
+					subAlias := fmt.Sprintf("%s_agg_%s", currentTableAlias, alias)
+					
+					var subSelect string
+					if fieldName == "*" && funcName == "count" {
+						subSelect = "COUNT(*)"
+					} else {
+						subSelect = fmt.Sprintf("%s(%s.%s)", strings.ToUpper(funcName), t.quoteIdentifier(subAlias), t.quoteIdentifier(fieldName))
+					}
+					
+					// Join Condition for Subquery
+					var subOnClause string
+					if relation.Type == "hasOne" {
+						// parent.field = sub.id
+						subOnClause = fmt.Sprintf("%s.%s = %s.id", t.quoteIdentifier(parentAlias), t.quoteIdentifier(relation.Field), t.quoteIdentifier(subAlias))
+					} else {
+						// sub.field = parent.id
+						subOnClause = fmt.Sprintf("%s.%s = %s.id", t.quoteIdentifier(subAlias), t.quoteIdentifier(relation.Field), t.quoteIdentifier(parentAlias))
+					}
+					
+					// Add filters from 'where' in include
+					var subWhere []string
+					subWhere = append(subWhere, subOnClause)
+					
+					if whereMap, ok := relMap["where"].(map[string]interface{}); ok {
+						// We need to process where clauses but using subAlias
+						conds, newArgs, err := t.processWhere(whereMap, subAlias)
+						if err == nil {
+							subWhere = append(subWhere, conds...)
+							*args = append(*args, newArgs...)
+						}
+					}
+					
+					fullSubQuery := fmt.Sprintf("(SELECT %s FROM %s AS %s WHERE %s)", 
+						subSelect, 
+						t.quoteIdentifier(targetTable), 
+						t.quoteIdentifier(subAlias), 
+						strings.Join(subWhere, " AND "))
+					
+					// Alias: currentHydratorPath___alias
+					finalAlias := fmt.Sprintf("%s___%s", currentHydratorPath, alias)
+					*selectParts = append(*selectParts, fmt.Sprintf("%s AS %s", fullSubQuery, t.quoteIdentifier(finalAlias)))
+				}
+			}
+		}
+
+		// Construct JOIN ON clause
+		var onClause string
+		if relation.Type == "hasOne" {
+			onClause = fmt.Sprintf("%s.%s = %s.id", t.quoteIdentifier(parentAlias), t.quoteIdentifier(relation.Field), t.quoteIdentifier(currentTableAlias))
+		} else if relation.Type == "hasMany" {
+			onClause = fmt.Sprintf("%s.%s = %s.id", t.quoteIdentifier(currentTableAlias), t.quoteIdentifier(relation.Field), t.quoteIdentifier(parentAlias))
+		} else {
+			onClause = fmt.Sprintf("%s.%s = %s.id", t.quoteIdentifier(parentAlias), t.quoteIdentifier(relation.Field), t.quoteIdentifier(currentTableAlias))
+		}
+
+		// Handle Nested Where (add to ON clause or WHERE clause?)
+		// If we add to WHERE, it filters the parent row if child is missing/filtered.
+		// If we add to ON, it filters the child (child becomes NULL) but keeps parent.
+		// Standard JSONQL usually implies filtering the result set.
+		// However, for "include", usually we want the parent.
+		// Let's put it in ON clause for now to support "filter included items".
+		if whereMap, ok := relMap["where"].(map[string]interface{}); ok {
+			conds, newArgs, err := t.processWhere(whereMap, currentTableAlias)
+			if err != nil {
+				return err
+			}
+			if len(conds) > 0 {
+				onClause += " AND " + strings.Join(conds, " AND ")
+				*args = append(*args, newArgs...)
+			}
+		}
+
+		*joinParts = append(*joinParts, fmt.Sprintf("LEFT JOIN %s AS %s ON %s", t.quoteIdentifier(targetTable), t.quoteIdentifier(currentTableAlias), onClause))
+
+		// Recursive call for nested includes
+		if nestedInclude, ok := relMap["include"].(map[string]interface{}); ok {
+			err := t.processJoin(nestedInclude, targetTable, currentTableAlias, currentHydratorPath, schema, selectParts, joinParts, whereConditions, args)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (t *Transpiler) processWhere(where map[string]interface{}, tableAlias string) ([]string, []interface{}, error) {
+	var conditions []string
+	var args []interface{}
+
+	for field, cond := range where {
+		if field == "or" {
+			if orList, ok := cond.([]interface{}); ok {
+				var orConditions []string
+				for _, item := range orList {
+					if itemMap, ok := item.(map[string]interface{}); ok {
+						for k, v := range itemMap {
+							if !isValidIdentifier(k) {
+								return nil, nil, fmt.Errorf("Invalid field name in OR clause: %s", k)
+							}
+							orConditions = append(orConditions, fmt.Sprintf("%s.%s = ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(k)))
+							args = append(args, v)
+						}
+					}
+				}
+				if len(orConditions) > 0 {
+					conditions = append(conditions, "("+strings.Join(orConditions, " OR ")+")")
+				}
+			}
+			continue
+		}
+
+		if !isValidIdentifier(field) {
+			return nil, nil, fmt.Errorf("Invalid field name in where clause: %s", field)
+		}
+
+		if valMap, ok := cond.(map[string]interface{}); ok {
+			if v, ok := valMap["eq"]; ok {
+				conditions = append(conditions, fmt.Sprintf("%s.%s = ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
+				args = append(args, v)
+			}
+			if v, ok := valMap["neq"]; ok {
+				conditions = append(conditions, fmt.Sprintf("%s.%s != ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
+				args = append(args, v)
+			}
+			if v, ok := valMap["gt"]; ok {
+				conditions = append(conditions, fmt.Sprintf("%s.%s > ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
+				args = append(args, v)
+			}
+			if v, ok := valMap["gte"]; ok {
+				conditions = append(conditions, fmt.Sprintf("%s.%s >= ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
+				args = append(args, v)
+			}
+			if v, ok := valMap["lt"]; ok {
+				conditions = append(conditions, fmt.Sprintf("%s.%s < ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
+				args = append(args, v)
+			}
+			if v, ok := valMap["lte"]; ok {
+				conditions = append(conditions, fmt.Sprintf("%s.%s <= ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
+				args = append(args, v)
+			}
+			if v, ok := valMap["like"]; ok {
+				conditions = append(conditions, fmt.Sprintf("%s.%s LIKE ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
+				args = append(args, v)
+			}
+			if v, ok := valMap["in"]; ok {
+				if slice, ok := v.([]interface{}); ok && len(slice) > 0 {
+					placeholders := make([]string, len(slice))
+					for i := range slice {
+						placeholders[i] = "?"
+						args = append(args, slice[i])
+					}
+					conditions = append(conditions, fmt.Sprintf("%s.%s IN (%s)", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field), strings.Join(placeholders, ", ")))
+				}
+			}
+		} else {
+			conditions = append(conditions, fmt.Sprintf("%s.%s = ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
+			args = append(args, cond)
+		}
+	}
+	return conditions, args, nil
 }
 
 func (t *Transpiler) replacePlaceholders(sql string) string {

@@ -2,6 +2,7 @@ package jsonql
 
 import (
 	"database/sql"
+	"strings"
 )
 
 // Hydrator converts SQL rows into JSON-friendly structures
@@ -37,22 +38,33 @@ func (h *Hydrator) Hydrate(rows *sql.Rows) ([]map[string]interface{}, error) {
 		for i, colName := range cols {
 			val := columns[i]
 			
-			// Handle nil
+			var finalVal interface{}
 			if val == nil {
-				rowMap[colName] = nil
-				continue
+				finalVal = nil
+			} else if b, ok := val.([]byte); ok {
+				finalVal = string(b)
+			} else {
+				finalVal = val
 			}
 
-			// Handle []byte for strings/blobs
-			if b, ok := val.([]byte); ok {
-				// Try to unmarshal as JSON if it looks like JSON (object or array)
-				// This is a simple heuristic. In a real app, we might use schema info.
-				// For now, let's just treat as string unless we want to auto-expand JSON columns.
-				// The TS SDK hydrator does nested object expansion if the query implies it.
-				// For now, let's just return string.
-				rowMap[colName] = string(b)
+			if strings.Contains(colName, "___") {
+				parts := strings.Split(colName, "___")
+				currentMap := rowMap
+				for j := 0; j < len(parts)-1; j++ {
+					part := parts[j]
+					if _, ok := currentMap[part]; !ok {
+						currentMap[part] = make(map[string]interface{})
+					}
+					if nextMap, ok := currentMap[part].(map[string]interface{}); ok {
+						currentMap = nextMap
+					} else {
+						// Should not happen if query is well-formed
+						break
+					}
+				}
+				currentMap[parts[len(parts)-1]] = finalVal
 			} else {
-				rowMap[colName] = val
+				rowMap[colName] = finalVal
 			}
 		}
 		results = append(results, rowMap)

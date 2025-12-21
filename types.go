@@ -32,4 +32,6 @@ type JSONQLQuery struct {
 	Limit     *int                   `json:"limit,omitempty"`
 	Offset    *int                   `json:"offset,omitempty"`
 	Aggregate map[string]interface{} `json:"aggregate,omitempty"`
+	GroupBy   []string               `json:"groupBy,omitempty"`
+	Include   map[string]interface{} `json:"include,omitempty"`
 }

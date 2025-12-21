@@ -48,7 +48,7 @@ func TestTranspilation(t *testing.T) {
 				t.Fatalf("Parsing failed: %v", err)
 			}
 
-			result, err := transpiler.Transpile(query, tc.TableName)
+			result, err := transpiler.Transpile(query, tc.TableName, nil)
 			if err != nil {
 				t.Fatalf("Transpilation failed: %v", err)
 			}

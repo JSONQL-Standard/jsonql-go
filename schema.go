@@ -19,8 +19,9 @@ type JSONQLField struct {
 }
 
 type JSONQLRelation struct {
-	Type string `json:"type"` // "hasOne" | "hasMany"
-	Field string `json:"field"`
+	Type  string `json:"type"`  // "hasOne" | "hasMany"
+	Field string `json:"field"` // Foreign Key
+	Table string `json:"table,omitempty"` // Target table name (optional, defaults to relation name)
 }
 
 type Validator struct {
@@ -48,6 +49,9 @@ func (v *Validator) Validate(query *JSONQLQuery) error {
 
 	// Where fields (allowFilter)
 	for field := range query.Where {
+		if field == "or" {
+			continue
+		}
 		fieldObj, ok := table.Fields[field]
 		if !ok || !fieldObj.AllowFilter {
 			return fmt.Errorf("field '%s' not filterable on table '%s'", field, v.table)

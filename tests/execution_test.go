@@ -135,7 +135,7 @@ func TestExecution(t *testing.T) {
 			}
 
 			// Transpile
-			result, err := transpiler.Transpile(query, tc.TableName)
+			result, err := transpiler.Transpile(query, tc.TableName, nil)
 			if err != nil {
 				t.Fatalf("Transpilation failed: %v", err)
 			}

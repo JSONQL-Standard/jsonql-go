@@ -12,6 +12,7 @@ import (
 type HandlerOptions struct {
 	Driver  jsonql.Driver
 	Dialect string
+	Schema  *jsonql.JSONQLSchema
 }
 
 // NewHandler creates a new JSONQL Echo handler
@@ -54,13 +55,13 @@ func NewHandler(opts HandlerOptions) (echo.HandlerFunc, error) {
 			}
 		}
 
-		parsedQuery, err := parser.Parse(queryBody, nil, tableName)
+		parsedQuery, err := parser.Parse(queryBody, opts.Schema, tableName)
 		if err != nil {
 			return c.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("Parse error: %v", err)})
 		}
 
 		// 3. Transpile
-		result, err := transpiler.Transpile(parsedQuery, tableName)
+		result, err := transpiler.Transpile(parsedQuery, tableName, opts.Schema)
 		if err != nil {
 			return c.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("Transpile error: %v", err)})
 		}

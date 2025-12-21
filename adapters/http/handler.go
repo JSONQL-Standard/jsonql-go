@@ -13,6 +13,7 @@ import (
 type HandlerOptions struct {
 	Driver  jsonql.Driver
 	Dialect string // "sqlite", "postgres", etc. Defaults to "sqlite" or Driver.Dialect()
+	Schema  *jsonql.JSONQLSchema
 }
 
 // Handler is an HTTP handler for JSONQL requests
@@ -21,6 +22,7 @@ type Handler struct {
 	transpiler *jsonql.Transpiler
 	driver     jsonql.Driver
 	hydrator   *jsonql.Hydrator
+	schema     *jsonql.JSONQLSchema
 }
 
 // NewHandler creates a new JSONQL HTTP handler
@@ -39,6 +41,7 @@ func NewHandler(opts HandlerOptions) (*Handler, error) {
 		transpiler: jsonql.NewTranspiler(dialect),
 		driver:     opts.Driver,
 		hydrator:   jsonql.NewHydrator(),
+		schema:     opts.Schema,
 	}, nil
 }
 
@@ -102,14 +105,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	parsedQuery, err := h.parser.Parse(queryBody, nil, tableName)
+	parsedQuery, err := h.parser.Parse(queryBody, h.schema, tableName)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Parse error: %v", err), http.StatusBadRequest)
 		return
 	}
 
 	// 4. Transpile
-	result, err := h.transpiler.Transpile(parsedQuery, tableName)
+	result, err := h.transpiler.Transpile(parsedQuery, tableName, h.schema)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Transpile error: %v", err), http.StatusBadRequest)
 		return
