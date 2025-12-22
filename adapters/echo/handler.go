@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/labstack/echo/v4"
 	"github.com/jsonql-standard/jsonql-go"
+	"github.com/labstack/echo/v4"
 )
 
 // HandlerOptions configuration for the JSONQL Echo handler

@@ -31,9 +31,9 @@ type FieldDefinition struct {
 
 // ValidationDefinition represents validation rules
 type ValidationDefinition struct {
-	Min     *float64  `json:"min,omitempty"`
-	Max     *float64  `json:"max,omitempty"`
-	Pattern string    `json:"pattern,omitempty"`
+	Min     *float64      `json:"min,omitempty"`
+	Max     *float64      `json:"max,omitempty"`
+	Pattern string        `json:"pattern,omitempty"`
 	Enum    []interface{} `json:"enum,omitempty"`
 }
 
@@ -89,18 +89,18 @@ func parseSQL(sql string) (SchemaDefinition, error) {
 	// This is a simplified parser and won't handle all SQL cases
 	// CREATE TABLE table_name ( ... );
 	reTable := regexp.MustCompile(`(?i)CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["` + "`" + `]?(\w+)["` + "`" + `]?\s*\(([\s\S]*?)\);`)
-	
+
 	matches := reTable.FindAllStringSubmatch(sql, -1)
-	
+
 	for _, match := range matches {
 		tableName := match[1]
 		body := match[2]
-		
+
 		tableDef := TableDefinition{
 			Fields:    make(map[string]FieldDefinition),
 			Relations: make(map[string]RelationDefinition),
 		}
-		
+
 		// Split by comma, but be careful about commas in parentheses (like DECIMAL(10,2))
 		// For simplicity, we'll split by newline first or just regex scan lines
 		lines := strings.Split(body, "\n")
@@ -109,28 +109,28 @@ func parseSQL(sql string) (SchemaDefinition, error) {
 			if line == "" || strings.HasPrefix(line, "--") {
 				continue
 			}
-			
+
 			// Remove trailing comma
 			line = strings.TrimSuffix(line, ",")
-			
+
 			// Parse column definition
 			// name type [constraints]
 			parts := strings.Fields(line)
 			if len(parts) < 2 {
 				continue
 			}
-			
+
 			// Skip keys/indexes for now
 			upperPart := strings.ToUpper(parts[0])
 			if upperPart == "PRIMARY" || upperPart == "KEY" || upperPart == "CONSTRAINT" || upperPart == "FOREIGN" || upperPart == "INDEX" || upperPart == "UNIQUE" {
 				continue
 			}
-			
+
 			colName := strings.Trim(parts[0], "\"`")
 			sqlType := strings.ToUpper(parts[1])
-			
+
 			jsonType := mapSQLTypeToJSONQL(sqlType)
-			
+
 			fieldDef := FieldDefinition{
 				Type:        jsonType,
 				Required:    false, // Default to nullable (not required) in SQL
@@ -139,7 +139,7 @@ func parseSQL(sql string) (SchemaDefinition, error) {
 				AllowFilter: true,
 				AllowSort:   true,
 			}
-			
+
 			// Check for NULL/NOT NULL
 			fullLineUpper := strings.ToUpper(line)
 			if strings.Contains(fullLineUpper, "NOT NULL") {
@@ -150,13 +150,13 @@ func parseSQL(sql string) (SchemaDefinition, error) {
 				fieldDef.Required = true
 				fieldDef.Nullable = false
 			}
-			
+
 			tableDef.Fields[colName] = fieldDef
 		}
-		
+
 		schema[tableName] = tableDef
 	}
-	
+
 	return schema, nil
 }
 
@@ -165,7 +165,7 @@ func mapSQLTypeToJSONQL(sqlType string) string {
 	if idx := strings.Index(sqlType, "("); idx != -1 {
 		sqlType = sqlType[:idx]
 	}
-	
+
 	switch sqlType {
 	case "INT", "INTEGER", "SMALLINT", "BIGINT", "DECIMAL", "NUMERIC", "FLOAT", "DOUBLE", "REAL":
 		return "number"

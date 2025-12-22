@@ -22,6 +22,10 @@ lint:
 	@echo "Linting..."
 	go vet ./...
 
+format:
+	@echo "Formatting..."
+	go fmt ./...
+
 deps:
 	@echo "Downloading dependencies..."
 	go mod download

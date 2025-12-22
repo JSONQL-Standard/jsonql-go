@@ -68,25 +68,25 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 3. Transpile
 	// Note: In a real scenario, we need to know the table name.
-	// The rawQuery keys are usually table names if it's a multi-table query, 
+	// The rawQuery keys are usually table names if it's a multi-table query,
 	// or the URL path might specify the table.
-	// For this simple adapter, let's assume the root key is the table name 
+	// For this simple adapter, let's assume the root key is the table name
 	// OR we support the structure { "tableName": { ... } }
-	
+
 	// However, parser.Parse expects the query object itself (fields, filter, etc).
 	// If the input is { "users": { "fields": [...] } }, parser.Parse might fail if it expects just the inner part.
 	// Let's look at how parser.Parse is implemented.
 	// It takes map[string]interface{}.
-	
+
 	// If the input is { "users": { ... } }, we need to extract "users" as table name and { ... } as query.
 	// If the input is just { "fields": ... }, we need the table name from somewhere else (e.g. URL).
-	
+
 	// Let's support:
 	// 1. POST /api/jsonql -> Body: { "users": { ... } }
 	// 2. POST /api/users  -> Body: { ... }
-	
+
 	// For now, let's implement case 1 (Body contains table name key).
-	
+
 	if len(rawQuery) != 1 {
 		http.Error(w, "Request body must contain exactly one root key (the table name)", http.StatusBadRequest)
 		return

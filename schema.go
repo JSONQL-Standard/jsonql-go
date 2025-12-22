@@ -7,26 +7,26 @@ type JSONQLSchema struct {
 }
 
 type JSONQLTable struct {
-	Fields map[string]*JSONQLField `json:"fields"`
+	Fields    map[string]*JSONQLField    `json:"fields"`
 	Relations map[string]*JSONQLRelation `json:"relations,omitempty"`
 }
 
 type JSONQLField struct {
-	Type string `json:"type"`
-	AllowSelect bool `json:"allowSelect,omitempty"`
-	AllowFilter bool `json:"allowFilter,omitempty"`
-	AllowSort bool `json:"allowSort,omitempty"`
+	Type        string `json:"type"`
+	AllowSelect bool   `json:"allowSelect,omitempty"`
+	AllowFilter bool   `json:"allowFilter,omitempty"`
+	AllowSort   bool   `json:"allowSort,omitempty"`
 }
 
 type JSONQLRelation struct {
-	Type  string `json:"type"`  // "hasOne" | "hasMany"
-	Field string `json:"field"` // Foreign Key
+	Type  string `json:"type"`            // "hasOne" | "hasMany"
+	Field string `json:"field"`           // Foreign Key
 	Table string `json:"table,omitempty"` // Target table name (optional, defaults to relation name)
 }
 
 type Validator struct {
 	schema *JSONQLSchema
-	table string
+	table  string
 }
 
 func NewValidator(schema *JSONQLSchema, table string) *Validator {

@@ -14,17 +14,17 @@ import (
 )
 
 type ExecutionTestCase struct {
-	ID             string                 `json:"id"`
-	Description    string                 `json:"description"`
-	TableName      string                 `json:"tableName"`
-	Query          map[string]interface{} `json:"query"`
+	ID             string                   `json:"id"`
+	Description    string                   `json:"description"`
+	TableName      string                   `json:"tableName"`
+	Query          map[string]interface{}   `json:"query"`
 	ExpectedResult []map[string]interface{} `json:"expectedResult"`
 }
 
 func TestExecution(t *testing.T) {
 	// 1. Load Data
 	dataPath := "fixtures/suites/standard/data.json"
-	
+
 	dataBytes, err := os.ReadFile(dataPath)
 	if err != nil {
 		t.Skipf("Data file not found at %s, skipping execution tests", dataPath)
@@ -54,7 +54,7 @@ func TestExecution(t *testing.T) {
 		firstRow := rows[0]
 		var colDefs []string
 		var colNames []string
-		
+
 		for col, val := range firstRow {
 			colType := "TEXT"
 			switch val.(type) {
@@ -86,7 +86,7 @@ func TestExecution(t *testing.T) {
 		for i := range placeholders {
 			placeholders[i] = "?"
 		}
-		insertSQL := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", 
+		insertSQL := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
 			tableName, strings.Join(colNames, ", "), strings.Join(placeholders, ", "))
 
 		for _, row := range rows {
@@ -194,7 +194,7 @@ func TestExecution(t *testing.T) {
 
 					// Normalize numbers for comparison
 					if !areEqual(v, actualVal) {
-						t.Errorf("Row %d key %s: expected %v (%T), got %v (%T)", 
+						t.Errorf("Row %d key %s: expected %v (%T), got %v (%T)",
 							i, k, v, v, actualVal, actualVal)
 					}
 				}
@@ -207,7 +207,7 @@ func areEqual(expected, actual interface{}) bool {
 	if reflect.DeepEqual(expected, actual) {
 		return true
 	}
-	
+
 	// Handle numeric mismatches (json unmarshals to float64, db might be int64)
 	v1 := reflect.ValueOf(expected)
 	v2 := reflect.ValueOf(actual)

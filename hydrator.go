@@ -37,7 +37,7 @@ func (h *Hydrator) Hydrate(rows *sql.Rows, schema *JSONQLSchema, rootTable strin
 		rowMap := make(map[string]interface{})
 		for i, colName := range cols {
 			val := columns[i]
-			
+
 			var finalVal interface{}
 			if val == nil {
 				finalVal = nil
@@ -50,11 +50,11 @@ func (h *Hydrator) Hydrate(rows *sql.Rows, schema *JSONQLSchema, rootTable strin
 			if strings.Contains(colName, "___") {
 				parts := strings.Split(colName, "___")
 				currentMap := rowMap
-				
+
 				// Traverse the path
 				for j := 0; j < len(parts)-1; j++ {
 					part := parts[j]
-					
+
 					// Check if this part exists
 					if _, ok := currentMap[part]; !ok {
 						// It's a new nested object
@@ -65,11 +65,11 @@ func (h *Hydrator) Hydrate(rows *sql.Rows, schema *JSONQLSchema, rootTable strin
 					// Note: This simple logic assumes 1:1 nesting for now during construction
 					// We will fix the structure (Map vs Slice) in a post-processing step or be smarter here.
 					// Being smarter here is hard because we are building the map field by field.
-					// Let's keep building it as a map, and then wrap it if needed? 
+					// Let's keep building it as a map, and then wrap it if needed?
 					// Or wrap it immediately?
-					
+
 					// If we wrap it immediately, subsequent fields (items___name) need to find the map INSIDE the slice.
-					
+
 					val := currentMap[part]
 					if m, ok := val.(map[string]interface{}); ok {
 						currentMap = m
@@ -93,7 +93,7 @@ func (h *Hydrator) Hydrate(rows *sql.Rows, schema *JSONQLSchema, rootTable strin
 				rowMap[colName] = finalVal
 			}
 		}
-		
+
 		// Post-process the row to enforce Schema types (hasMany -> Slice)
 		if schema != nil && rootTable != "" {
 			h.enforceSliceTypes(rowMap, schema, rootTable)

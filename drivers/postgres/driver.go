@@ -24,7 +24,7 @@ func NewDriver(dsn string) (*Driver, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to open postgres db: %w", err)
 	}
-	
+
 	// Verify connection
 	if err := db.Ping(); err != nil {
 		return nil, fmt.Errorf("failed to ping postgres db: %w", err)

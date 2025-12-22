@@ -83,7 +83,7 @@ func (t *Transpiler) Transpile(query *JSONQLQuery, tableName string, schema *JSO
 		if schema == nil {
 			return nil, fmt.Errorf("Schema is required for relationships")
 		}
-		
+
 		// Start recursion with root table info
 		err := t.processJoin(query.Include, tableName, tableName, "", schema, &selectParts, &joinParts, &whereConditions, &args)
 		if err != nil {
@@ -143,7 +143,7 @@ func (t *Transpiler) Transpile(query *JSONQLQuery, tableName string, schema *JSO
 			if !isValidIdentifier(field) {
 				return nil, fmt.Errorf("Invalid sort field: %s", field)
 			}
-			
+
 			order := "ASC"
 			if desc {
 				order = "DESC"
@@ -173,12 +173,12 @@ func (t *Transpiler) Transpile(query *JSONQLQuery, tableName string, schema *JSO
 }
 
 func (t *Transpiler) processJoin(
-	include map[string]interface{}, 
-	parentTable string, 
+	include map[string]interface{},
+	parentTable string,
 	parentAlias string,
 	hydratorPath string, // e.g. "items", "items___product"
-	schema *JSONQLSchema, 
-	selectParts *[]string, 
+	schema *JSONQLSchema,
+	selectParts *[]string,
 	joinParts *[]string,
 	whereConditions *[]string,
 	args *[]interface{},
@@ -204,7 +204,7 @@ func (t *Transpiler) processJoin(
 		// Else alias is parentAlias_relName
 		var currentTableAlias string
 		var currentHydratorPath string
-		
+
 		if hydratorPath == "" {
 			currentTableAlias = relName
 			currentHydratorPath = relName
@@ -242,20 +242,20 @@ func (t *Transpiler) processJoin(
 					if !ok {
 						continue
 					}
-					
+
 					// Build Subquery
 					// SELECT func(field) FROM targetTable WHERE joinCond AND whereCond
-					
+
 					// We need a unique alias for the subquery table to avoid collision with the main join
 					subAlias := fmt.Sprintf("%s_agg_%s", currentTableAlias, alias)
-					
+
 					var subSelect string
 					if fieldName == "*" && funcName == "count" {
 						subSelect = "COUNT(*)"
 					} else {
 						subSelect = fmt.Sprintf("%s(%s.%s)", strings.ToUpper(funcName), t.quoteIdentifier(subAlias), t.quoteIdentifier(fieldName))
 					}
-					
+
 					// Join Condition for Subquery
 					var subOnClause string
 					if relation.Type == "hasOne" {
@@ -265,11 +265,11 @@ func (t *Transpiler) processJoin(
 						// sub.field = parent.id
 						subOnClause = fmt.Sprintf("%s.%s = %s.id", t.quoteIdentifier(subAlias), t.quoteIdentifier(relation.Field), t.quoteIdentifier(parentAlias))
 					}
-					
+
 					// Add filters from 'where' in include
 					var subWhere []string
 					subWhere = append(subWhere, subOnClause)
-					
+
 					if whereMap, ok := relMap["where"].(map[string]interface{}); ok {
 						// We need to process where clauses but using subAlias
 						conds, newArgs, err := t.processWhere(whereMap, subAlias)
@@ -278,13 +278,13 @@ func (t *Transpiler) processJoin(
 							*args = append(*args, newArgs...)
 						}
 					}
-					
-					fullSubQuery := fmt.Sprintf("(SELECT %s FROM %s AS %s WHERE %s)", 
-						subSelect, 
-						t.quoteIdentifier(targetTable), 
-						t.quoteIdentifier(subAlias), 
+
+					fullSubQuery := fmt.Sprintf("(SELECT %s FROM %s AS %s WHERE %s)",
+						subSelect,
+						t.quoteIdentifier(targetTable),
+						t.quoteIdentifier(subAlias),
 						strings.Join(subWhere, " AND "))
-					
+
 					// Alias: currentHydratorPath___alias
 					finalAlias := fmt.Sprintf("%s___%s", currentHydratorPath, alias)
 					*selectParts = append(*selectParts, fmt.Sprintf("%s AS %s", fullSubQuery, t.quoteIdentifier(finalAlias)))
@@ -433,4 +433,3 @@ func (t *Transpiler) placeholder(index int) string {
 func (t *Transpiler) quoteIdentifier(name string) string {
 	return t.Dialect.QuoteIdentifier(name)
 }
-
