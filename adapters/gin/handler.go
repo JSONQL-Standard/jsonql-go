@@ -39,22 +39,33 @@ func NewHandler(opts HandlerOptions) (gin.HandlerFunc, error) {
 		}
 
 		// 2. Parse
-		// Support { "tableName": { ... } } structure
-		if len(rawQuery) != 1 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Request body must contain exactly one root key (the table name)"})
-			return
-		}
-
 		var tableName string
 		var queryBody map[string]interface{}
 
-		for k, v := range rawQuery {
-			tableName = k
-			if q, ok := v.(map[string]interface{}); ok {
-				queryBody = q
+		// Check for standard spec format: { "from": "table", ... }
+		if fromVal, ok := rawQuery["from"]; ok {
+			if fromStr, ok := fromVal.(string); ok {
+				tableName = fromStr
+				queryBody = rawQuery
 			} else {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "Query body must be a JSON object"})
+				c.JSON(http.StatusBadRequest, gin.H{"error": "'from' field must be a string"})
 				return
+			}
+		} else {
+			// Fallback to adapter style: { "tableName": { ... } }
+			if len(rawQuery) != 1 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Request body must contain 'from' field or exactly one root key (the table name)"})
+				return
+			}
+
+			for k, v := range rawQuery {
+				tableName = k
+				if q, ok := v.(map[string]interface{}); ok {
+					queryBody = q
+				} else {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Query body must be a JSON object"})
+					return
+				}
 			}
 		}
 
@@ -80,7 +91,7 @@ func NewHandler(opts HandlerOptions) (gin.HandlerFunc, error) {
 		defer rows.Close()
 
 		// 5. Hydrate
-		data, err := hydrator.Hydrate(rows)
+		data, err := hydrator.Hydrate(rows, opts.Schema, tableName)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Hydration error: %v", err)})
 			return
