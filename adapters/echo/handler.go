@@ -74,7 +74,7 @@ func NewHandler(opts HandlerOptions) (echo.HandlerFunc, error) {
 		defer rows.Close()
 
 		// 5. Hydrate
-		data, err := hydrator.Hydrate(rows)
+		data, err := hydrator.Hydrate(rows, opts.Schema, tableName)
 		if err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("Hydration error: %v", err)})
 		}

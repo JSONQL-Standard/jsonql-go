@@ -127,7 +127,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	// 6. Hydrate
-	data, err := h.hydrator.Hydrate(rows)
+	data, err := h.hydrator.Hydrate(rows, h.schema, tableName)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Hydration error: %v", err), http.StatusInternalServerError)
 		return
