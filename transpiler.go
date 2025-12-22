@@ -218,6 +218,47 @@ func (t *Transpiler) processJoin(
 			return fmt.Errorf("Invalid include configuration for %s", relName)
 		}
 
+		// Parse Limit/Skip/Sort for Pagination
+		var limit int
+		var offset int
+		var hasLimit, hasOffset bool
+
+		if l, ok := relMap["limit"].(float64); ok {
+			limit = int(l)
+			hasLimit = true
+		}
+		if s, ok := relMap["skip"].(float64); ok {
+			offset = int(s)
+			hasOffset = true
+		}
+
+		var sortParts []string
+		if sortVal, ok := relMap["sort"]; ok {
+			parseSort := func(s string) string {
+				desc := false
+				field := s
+				if strings.HasPrefix(s, "-") {
+					desc = true
+					field = s[1:]
+				}
+				order := "ASC"
+				if desc {
+					order = "DESC"
+				}
+				return fmt.Sprintf("%s %s", t.quoteIdentifier(field), order)
+			}
+
+			if s, ok := sortVal.(string); ok {
+				sortParts = append(sortParts, parseSort(s))
+			} else if sArr, ok := sortVal.([]interface{}); ok {
+				for _, item := range sArr {
+					if s, ok := item.(string); ok {
+						sortParts = append(sortParts, parseSort(s))
+					}
+				}
+			}
+		}
+
 		// Parse included fields
 		if fields, ok := relMap["fields"].([]interface{}); ok {
 			for _, f := range fields {
@@ -319,7 +360,35 @@ func (t *Transpiler) processJoin(
 			}
 		}
 
-		*joinParts = append(*joinParts, fmt.Sprintf("LEFT JOIN %s AS %s ON %s", t.quoteIdentifier(targetTable), t.quoteIdentifier(currentTableAlias), onClause))
+		// Handle Pagination (Window Functions)
+		targetTableSQL := t.quoteIdentifier(targetTable)
+		if hasLimit || hasOffset {
+			// Add filters to ON clause
+			if hasLimit {
+				onClause += fmt.Sprintf(" AND %s.rn <= %d", t.quoteIdentifier(currentTableAlias), limit+offset)
+			}
+			if hasOffset {
+				onClause += fmt.Sprintf(" AND %s.rn > %d", t.quoteIdentifier(currentTableAlias), offset)
+			}
+
+			// Build Subquery with Window Function
+			orderBy := "id ASC" // Default sort
+			if len(sortParts) > 0 {
+				orderBy = strings.Join(sortParts, ", ")
+			}
+
+			partitionKey := "id"
+			if relation.Type == "hasMany" || relation.Type == "hasOne" {
+				partitionKey = relation.Field
+			}
+
+			targetTableSQL = fmt.Sprintf("(SELECT *, ROW_NUMBER() OVER (PARTITION BY %s ORDER BY %s) as rn FROM %s)",
+				t.quoteIdentifier(partitionKey),
+				orderBy,
+				t.quoteIdentifier(targetTable))
+		}
+
+		*joinParts = append(*joinParts, fmt.Sprintf("LEFT JOIN %s AS %s ON %s", targetTableSQL, t.quoteIdentifier(currentTableAlias), onClause))
 
 		// Recursive call for nested includes
 		if nestedInclude, ok := relMap["include"].(map[string]interface{}); ok {

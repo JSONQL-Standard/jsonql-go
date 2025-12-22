@@ -20,7 +20,7 @@ func (h *Hydrator) Hydrate(rows *sql.Rows, schema *JSONQLSchema, rootTable strin
 		return nil, err
 	}
 
-	var results []map[string]interface{}
+	var rawRows []map[string]interface{}
 
 	for rows.Next() {
 		// Create a slice of interface{} to hold pointers to values
@@ -95,44 +95,138 @@ func (h *Hydrator) Hydrate(rows *sql.Rows, schema *JSONQLSchema, rootTable strin
 		}
 
 		// Post-process the row to enforce Schema types (hasMany -> Slice)
-		if schema != nil && rootTable != "" {
-			h.enforceSliceTypes(rowMap, schema, rootTable)
-		}
-
-		results = append(results, rowMap)
+		// We don't do it per row anymore, we do it after collecting all rows
+		rawRows = append(rawRows, rowMap)
 	}
 
-	return results, nil
+	if schema != nil && rootTable != "" {
+		return h.mergeRows(rawRows, schema, rootTable), nil
+	}
+
+	return rawRows, nil
 }
 
-func (h *Hydrator) enforceSliceTypes(data map[string]interface{}, schema *JSONQLSchema, tableName string) {
-	tableDef, ok := schema.Tables[tableName]
-	if !ok {
-		return
+// mergeRows groups rows by ID and merges relationships
+func (h *Hydrator) mergeRows(rows []map[string]interface{}, schema *JSONQLSchema, tableName string) []map[string]interface{} {
+	if len(rows) == 0 {
+		return nil
 	}
 
-	for key, val := range data {
-		// Check if this key is a relation
-		if rel, ok := tableDef.Relations[key]; ok {
-			// If it's hasMany, ensure it's a slice
-			if rel.Type == "hasMany" {
-				if m, ok := val.(map[string]interface{}); ok {
-					// Convert map to slice of map
-					data[key] = []map[string]interface{}{m}
-					// Recurse
-					h.enforceSliceTypes(m, schema, rel.Table)
-				} else if s, ok := val.([]map[string]interface{}); ok {
-					// Already a slice, recurse on elements
-					for _, item := range s {
-						h.enforceSliceTypes(item, schema, rel.Table)
+	// Group by ID
+	groups := make(map[interface{}][]map[string]interface{})
+	var order []interface{} // To preserve order
+
+	for _, row := range rows {
+		// We assume 'id' is the PK. If missing, we can't merge, so treat as unique.
+		id, ok := row["id"]
+		if !ok || id == nil {
+			// If no ID, we can't group. Just append to results?
+			// Or maybe this row IS the result (e.g. aggregate result without ID).
+			// If we are in a recursion, this might be a problem.
+			// Let's treat it as a unique group key.
+			// Use the row itself as key? No, map key must be comparable.
+			// Use index?
+			// For now, let's just skip grouping for rows without ID and return them as is?
+			// But we need to return a consistent slice.
+			// Let's use a pointer to the row as a unique ID substitute?
+			// Or just append to a "no-id" list.
+			// For simplicity in this app: if no ID, don't merge.
+			// But we must return []map.
+			// Let's just return the rows as is if we can't find ID in the first row?
+			// No, mixed content is possible.
+
+			// Fallback: use a unique counter
+			id = &row // Pointer as unique key
+		}
+
+		if _, exists := groups[id]; !exists {
+			order = append(order, id)
+		}
+		groups[id] = append(groups[id], row)
+	}
+
+	var results []map[string]interface{}
+
+	tableDef, hasSchema := schema.Tables[tableName]
+
+	for _, id := range order {
+		groupRows := groups[id]
+		baseRow := groupRows[0]
+
+		merged := make(map[string]interface{})
+
+		// Copy non-relation fields from baseRow
+		for k, v := range baseRow {
+			isRelation := false
+			if hasSchema {
+				if _, ok := tableDef.Relations[k]; ok {
+					isRelation = true
+				}
+			}
+			if !isRelation {
+				merged[k] = v
+			}
+		}
+
+		// Handle Relations
+		if hasSchema {
+			for relName, relDef := range tableDef.Relations {
+				var subRows []map[string]interface{}
+				for _, r := range groupRows {
+					if val, ok := r[relName]; ok {
+						if m, ok := val.(map[string]interface{}); ok {
+							if h.isValidRow(m) {
+								subRows = append(subRows, m)
+							}
+						} else if s, ok := val.([]map[string]interface{}); ok {
+							for _, item := range s {
+								if h.isValidRow(item) {
+									subRows = append(subRows, item)
+								}
+							}
+						}
 					}
 				}
-			} else if rel.Type == "hasOne" || rel.Type == "belongsTo" {
-				// Recurse
-				if m, ok := val.(map[string]interface{}); ok {
-					h.enforceSliceTypes(m, schema, rel.Table)
+
+				targetTable := relDef.Table
+				if targetTable == "" {
+					targetTable = relName
+				}
+
+				mergedSub := h.mergeRows(subRows, schema, targetTable)
+
+				if relDef.Type == "hasMany" {
+					if mergedSub == nil {
+						merged[relName] = []map[string]interface{}{}
+					} else {
+						merged[relName] = mergedSub
+					}
+				} else {
+					// hasOne
+					if len(mergedSub) > 0 {
+						merged[relName] = mergedSub[0]
+					} else {
+						merged[relName] = nil
+					}
 				}
 			}
 		}
+
+		results = append(results, merged)
 	}
+
+	return results
+}
+
+// isValidRow checks if a row has valid data (non-nil ID or at least one non-nil field)
+func (h *Hydrator) isValidRow(row map[string]interface{}) bool {
+	if id, ok := row["id"]; ok {
+		return id != nil
+	}
+	for _, v := range row {
+		if v != nil {
+			return true
+		}
+	}
+	return false
 }
