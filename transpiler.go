@@ -154,16 +154,11 @@ func (t *Transpiler) Transpile(query *JSONQLQuery, tableName string, schema *JSO
 	}
 
 	// 7. LIMIT / OFFSET
-	if query.Limit != nil {
+	if query.Limit != nil && *query.Limit > 0 {
 		sqlStr += fmt.Sprintf(" LIMIT %d", *query.Limit)
 	}
-	if query.Offset != nil {
+	if query.Offset != nil && *query.Offset > 0 {
 		sqlStr += fmt.Sprintf(" OFFSET %d", *query.Offset)
-	}
-
-	// Post-process for dialect-specific placeholders
-	if t.Dialect.Name() == "postgres" {
-		sqlStr = t.replacePlaceholders(sqlStr)
 	}
 
 	return &TranspileResult{

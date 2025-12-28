@@ -2,6 +2,7 @@ package jsonql
 
 import (
 	"database/sql"
+	"log"
 	"strings"
 )
 
@@ -171,6 +172,31 @@ func (h *Hydrator) mergeRows(rows []map[string]interface{}, schema *JSONQLSchema
 		// Handle Relations
 		if hasSchema {
 			for relName, relDef := range tableDef.Relations {
+				// Check if this relation is present in any of the rows
+				// If not present in the raw rows, it means it wasn't requested in the query
+				relationPresent := false
+				for _, r := range groupRows {
+					if _, ok := r[relName]; ok {
+						relationPresent = true
+						break
+					}
+				}
+
+				// Heuristic to match TS behavior:
+				// If specific fields were selected (subset), TS excludes relations.
+				// If all fields were selected (default), TS includes relations as null.
+				// We check if all defined fields are present in the baseRow.
+				allColumnsSelected := true
+				for fieldName := range tableDef.Fields {
+					if _, ok := baseRow[fieldName]; !ok {
+						allColumnsSelected = false
+						break
+					}
+				}
+
+				if !relationPresent && !allColumnsSelected {
+					continue
+				}
 				var subRows []map[string]interface{}
 				for _, r := range groupRows {
 					if val, ok := r[relName]; ok {
@@ -211,7 +237,7 @@ func (h *Hydrator) mergeRows(rows []map[string]interface{}, schema *JSONQLSchema
 				}
 			}
 		}
-
+		log.Printf("Merged row: %+v\n", merged)
 		results = append(results, merged)
 	}
 

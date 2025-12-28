@@ -7,7 +7,7 @@
       "version": "1.0",
       "fields": ["id", "name"]
     },
-    "expectedSQL": "SELECT id, name FROM users"
+    "expectedSQL": "SELECT users.id, users.name FROM users"
   },
   {
     "id": "sql-002",
@@ -29,7 +29,7 @@
         "status": { "eq": "active" }
       }
     },
-    "expectedSQL": "SELECT id FROM users WHERE status = ?",
+    "expectedSQL": "SELECT users.id FROM users WHERE users.status = ?",
     "expectedArgs": ["active"]
   }
 ]
