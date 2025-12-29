@@ -10,8 +10,24 @@ build:
 	go build -o bin/$(BINARY_NAME) ./cmd/jsonql-gen-sql
 
 test:
-	@echo "Running tests..."
-	go test -v ./...
+	@if command -v gotestsum > /dev/null; then \
+		gotestsum --format testname -- ./...; \
+	elif [ -f $(HOME)/go/bin/gotestsum ]; then \
+		$(HOME)/go/bin/gotestsum --format testname -- ./...; \
+	else \
+		echo "Running tests (install gotestsum for nicer output)..."; \
+		go test -v ./...; \
+	fi
+
+test-watch:
+	@if command -v gotestsum > /dev/null; then \
+		gotestsum --watch -- ./...; \
+	elif [ -f $(HOME)/go/bin/gotestsum ]; then \
+		$(HOME)/go/bin/gotestsum --watch -- ./...; \
+	else \
+		echo "gotestsum not found. Please install it: go install gotest.tools/gotestsum@latest"; \
+		exit 1; \
+	fi
 
 clean:
 	@echo "Cleaning..."

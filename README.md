@@ -110,3 +110,16 @@ Contributions are welcome! Please ensure you run the tests before submitting a P
 ```bash
 make test
 ```
+
+For Jest-like test output (summaries, colors), install `gotestsum`:
+
+```bash
+go install gotest.tools/gotestsum@latest
+make test
+```
+
+You can also run tests in watch mode:
+
+```bash
+make test-watch
+```
