@@ -79,7 +79,54 @@ func (i *SQLiteIntrospector) Introspect() (*jsonql.JSONQLSchema, error) {
 		}
 		colRows.Close() // Close explicitly inside loop
 
+		// 3. Get Foreign Keys
+		fkRows, err := i.driver.Query(ctx, "PRAGMA foreign_key_list(\""+tableName+"\")", nil)
+		if err != nil {
+			return nil, err
+		}
+		defer fkRows.Close()
+
+		for fkRows.Next() {
+			var id, seq int
+			var table, from, to, onUpdate, onDelete, match string
+			if err := fkRows.Scan(&id, &seq, &table, &from, &to, &onUpdate, &onDelete, &match); err != nil {
+				return nil, err
+			}
+
+			// Infer relation name from column name (e.g., user_id -> user)
+			relName := table
+			if strings.HasSuffix(from, "_id") {
+				relName = strings.TrimSuffix(from, "_id")
+			}
+
+			tableSchema.Relations[relName] = &jsonql.JSONQLRelation{
+				Type:  "hasOne",
+				Field: from,
+				Table: table,
+			}
+		}
+		fkRows.Close()
+
 		schema.Tables[tableName] = tableSchema
+	}
+
+	// 4. Infer hasMany relations (Inverse of hasOne)
+	for tableName, table := range schema.Tables {
+		for _, rel := range table.Relations {
+			if rel.Type == "hasOne" {
+				targetTable, ok := schema.Tables[rel.Table]
+				if !ok {
+					continue
+				}
+				// Add hasMany to target table
+				// Relation name is the source table name (e.g., orders)
+				targetTable.Relations[tableName] = &jsonql.JSONQLRelation{
+					Type:  "hasMany",
+					Field: rel.Field, // The field in the source table
+					Table: tableName, // The source table
+				}
+			}
+		}
 	}
 
 	return schema, nil
