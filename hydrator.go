@@ -101,14 +101,14 @@ func (h *Hydrator) Hydrate(rows *sql.Rows, schema *JSONQLSchema, rootTable strin
 	}
 
 	if schema != nil && rootTable != "" {
-		return h.mergeRows(rawRows, schema, rootTable), nil
+		return h.MergeRows(rawRows, schema, rootTable), nil
 	}
 
 	return rawRows, nil
 }
 
-// mergeRows groups rows by ID and merges relationships
-func (h *Hydrator) mergeRows(rows []map[string]interface{}, schema *JSONQLSchema, tableName string) []map[string]interface{} {
+// MergeRows groups rows by ID and merges relationships
+func (h *Hydrator) MergeRows(rows []map[string]interface{}, schema *JSONQLSchema, tableName string) []map[string]interface{} {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -219,13 +219,37 @@ func (h *Hydrator) mergeRows(rows []map[string]interface{}, schema *JSONQLSchema
 					targetTable = relName
 				}
 
-				mergedSub := h.mergeRows(subRows, schema, targetTable)
+				mergedSub := h.MergeRows(subRows, schema, targetTable)
 
 				if relDef.Type == "hasMany" {
 					if mergedSub == nil {
 						merged[relName] = []map[string]interface{}{}
 					} else {
-						merged[relName] = mergedSub
+						// Check if this is an aggregate result (single row, no ID, fields not in schema)
+						isAggregate := false
+						if len(mergedSub) == 1 {
+							row := mergedSub[0]
+							if _, hasID := row["id"]; !hasID {
+								if targetTableDef, ok := schema.Tables[targetTable]; ok {
+									allFieldsUnknown := true
+									for k := range row {
+										if _, isField := targetTableDef.Fields[k]; isField {
+											allFieldsUnknown = false
+											break
+										}
+									}
+									if allFieldsUnknown {
+										isAggregate = true
+									}
+								}
+							}
+						}
+
+						if isAggregate {
+							merged[relName] = mergedSub[0]
+						} else {
+							merged[relName] = mergedSub
+						}
 					}
 				} else {
 					// hasOne
