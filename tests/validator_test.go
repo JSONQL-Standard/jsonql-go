@@ -1,6 +1,7 @@
 package jsonql_test
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -8,17 +9,22 @@ import (
 )
 
 func TestValidator(t *testing.T) {
-	schema := &jsonql.JSONQLSchema{
-		Tables: map[string]*jsonql.JSONQLTable{
+	schemaJSON := `{
+		"tables": {
 			"users": {
-				Fields: map[string]*jsonql.JSONQLField{
-					"id":    {Type: "number", AllowSelect: true, AllowFilter: true, AllowSort: true},
-					"name":  {Type: "string", AllowSelect: true, AllowFilter: true, AllowSort: true},
-					"email": {Type: "string", AllowSelect: false, AllowFilter: false, AllowSort: false}, // Restricted
-					"role":  {Type: "string", AllowSelect: true, AllowFilter: false, AllowSort: false},
-				},
-			},
-		},
+				"fields": {
+					"id":    { "type": "number", "allowSelect": true, "allowFilter": true, "allowSort": true },
+					"name":  { "type": "string", "allowSelect": true, "allowFilter": true, "allowSort": true },
+					"email": { "type": "string", "allowSelect": false, "allowFilter": false, "allowSort": false },
+					"role":  { "type": "string", "allowSelect": true, "allowFilter": false, "allowSort": false }
+				}
+			}
+		}
+	}`
+
+	var schema jsonql.JSONQLSchema
+	if err := json.Unmarshal([]byte(schemaJSON), &schema); err != nil {
+		t.Fatalf("Failed to parse schema: %v", err)
 	}
 
 	tests := []struct {
@@ -85,7 +91,7 @@ func TestValidator(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			v := jsonql.NewValidator(schema, tt.tableName)
+			v := jsonql.NewValidator(&schema, tt.tableName)
 			err := v.Validate(&tt.query)
 
 			if tt.wantErr {

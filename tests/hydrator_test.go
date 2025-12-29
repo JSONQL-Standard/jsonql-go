@@ -9,41 +9,45 @@ import (
 )
 
 func TestHydrator_MergeRows(t *testing.T) {
-	schema := &jsonql.JSONQLSchema{
-		Tables: map[string]*jsonql.JSONQLTable{
+	schemaJSON := `{
+		"tables": {
 			"users": {
-				Fields: map[string]*jsonql.JSONQLField{
-					"id":   {Type: "number"},
-					"name": {Type: "string"},
+				"fields": {
+					"id":   { "type": "number" },
+					"name": { "type": "string" }
 				},
-				Relations: map[string]*jsonql.JSONQLRelation{
-					"posts": {Type: "hasMany", Table: "posts", Field: "user_id"},
-					"profile": {Type: "hasOne", Table: "profiles", Field: "user_id"},
-				},
+				"relations": {
+					"posts": { "type": "hasMany", "table": "posts", "field": "user_id" },
+					"profile": { "type": "hasOne", "table": "profiles", "field": "user_id" }
+				}
 			},
 			"posts": {
-				Fields: map[string]*jsonql.JSONQLField{
-					"id":      {Type: "number"},
-					"title":   {Type: "string"},
-					"user_id": {Type: "number"},
+				"fields": {
+					"id":      { "type": "number" },
+					"title":   { "type": "string" },
+					"user_id": { "type": "number" }
 				},
-				Relations: map[string]*jsonql.JSONQLRelation{
-					"comments": {Type: "hasMany", Table: "comments", Field: "post_id"},
-				},
+				"relations": {
+					"comments": { "type": "hasMany", "table": "comments", "field": "post_id" }
+				}
 			},
 			"profiles": {
-				Fields: map[string]*jsonql.JSONQLField{
-					"id":  {Type: "number"},
-					"bio": {Type: "string"},
-				},
+				"fields": {
+					"id":  { "type": "number" },
+					"bio": { "type": "string" }
+				}
 			},
 			"comments": {
-				Fields: map[string]*jsonql.JSONQLField{
-					"id":   {Type: "number"},
-					"text": {Type: "string"},
-				},
-			},
-		},
+				"fields": {
+					"id":   { "type": "number" },
+					"text": { "type": "string" }
+				}
+			}
+		}
+	}`
+	var schema jsonql.JSONQLSchema
+	if err := json.Unmarshal([]byte(schemaJSON), &schema); err != nil {
+		t.Fatalf("Failed to parse schema: %v", err)
 	}
 
 	hydrator := jsonql.NewHydrator()
@@ -168,7 +172,7 @@ func TestHydrator_MergeRows(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := hydrator.MergeRows(tt.input, schema, tt.root)
+			got := hydrator.MergeRows(tt.input, &schema, tt.root)
 
 			// Use JSON comparison for easier map equality check
 			gotJSON, _ := json.Marshal(got)

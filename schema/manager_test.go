@@ -1,6 +1,7 @@
 package schema
 
 import (
+	"encoding/json"
 	"testing"
 
 	jsonql "github.com/jsonql-standard/jsonql-go"
@@ -16,18 +17,22 @@ func (m *MockIntrospector) Introspect() (*jsonql.JSONQLSchema, error) {
 }
 
 func TestManager_Load_IntrospectionOnly(t *testing.T) {
-	mockSchema := &jsonql.JSONQLSchema{
-		Tables: map[string]*jsonql.JSONQLTable{
+	mockSchemaJSON := `{
+		"tables": {
 			"users": {
-				Fields: map[string]*jsonql.JSONQLField{
-					"id": {Type: "integer"},
-				},
-			},
-		},
+				"fields": {
+					"id": { "type": "integer" }
+				}
+			}
+		}
+	}`
+	var mockSchema jsonql.JSONQLSchema
+	if err := json.Unmarshal([]byte(mockSchemaJSON), &mockSchema); err != nil {
+		t.Fatalf("Failed to unmarshal mock schema: %v", err)
 	}
 
 	manager := NewManager(ManagerOptions{
-		Introspector: &MockIntrospector{schema: mockSchema},
+		Introspector: &MockIntrospector{schema: &mockSchema},
 	})
 
 	schema, err := manager.Load()
@@ -45,38 +50,46 @@ func TestManager_Load_IntrospectionOnly(t *testing.T) {
 
 func TestManager_Load_Merge(t *testing.T) {
 	// Base schema (simulating introspection)
-	base := &jsonql.JSONQLSchema{
-		Tables: map[string]*jsonql.JSONQLTable{
+	baseJSON := `{
+		"tables": {
 			"users": {
-				Fields: map[string]*jsonql.JSONQLField{
-					"id":   {Type: "integer"},
-					"name": {Type: "string"},
-				},
-			},
-		},
+				"fields": {
+					"id":   { "type": "integer" },
+					"name": { "type": "string" }
+				}
+			}
+		}
+	}`
+	var base jsonql.JSONQLSchema
+	if err := json.Unmarshal([]byte(baseJSON), &base); err != nil {
+		t.Fatalf("Failed to unmarshal base schema: %v", err)
 	}
 
 	// Override schema (simulating file load)
-	override := &jsonql.JSONQLSchema{
-		Tables: map[string]*jsonql.JSONQLTable{
+	overrideJSON := `{
+		"tables": {
 			"users": {
-				Fields: map[string]*jsonql.JSONQLField{
-					"email": {Type: "string"},
+				"fields": {
+					"email": { "type": "string" }
 				},
-				Relations: map[string]*jsonql.JSONQLRelation{
-					"posts": {Type: "hasMany"},
-				},
+				"relations": {
+					"posts": { "type": "hasMany" }
+				}
 			},
 			"posts": {
-				Fields: map[string]*jsonql.JSONQLField{
-					"id": {Type: "integer"},
-				},
-			},
-		},
+				"fields": {
+					"id": { "type": "integer" }
+				}
+			}
+		}
+	}`
+	var override jsonql.JSONQLSchema
+	if err := json.Unmarshal([]byte(overrideJSON), &override); err != nil {
+		t.Fatalf("Failed to unmarshal override schema: %v", err)
 	}
 
 	manager := &Manager{}
-	manager.mergeSchemas(base, override)
+	manager.mergeSchemas(&base, &override)
 
 	// Check users table merged
 	users := base.Tables["users"]
@@ -93,5 +106,37 @@ func TestManager_Load_Merge(t *testing.T) {
 	// Check posts table added
 	if _, ok := base.Tables["posts"]; !ok {
 		t.Error("Expected posts table")
+	}
+}
+
+func TestManager_Load_FromJSON(t *testing.T) {
+	// Demonstrating loading from JSON string instead of struct literal
+	jsonSchema := `{
+		"tables": {
+			"products": {
+				"fields": {
+					"id": { "type": "integer" },
+					"name": { "type": "string" }
+				}
+			}
+		}
+	}`
+
+	var schema jsonql.JSONQLSchema
+	if err := json.Unmarshal([]byte(jsonSchema), &schema); err != nil {
+		t.Fatalf("Failed to unmarshal JSON: %v", err)
+	}
+
+	manager := NewManager(ManagerOptions{
+		Introspector: &MockIntrospector{schema: &schema},
+	})
+
+	loaded, err := manager.Load()
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	if _, ok := loaded.Tables["products"]; !ok {
+		t.Error("Expected table 'products' from JSON")
 	}
 }
