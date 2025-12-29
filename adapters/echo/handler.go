@@ -10,9 +10,11 @@ import (
 
 // HandlerOptions configuration for the JSONQL Echo handler
 type HandlerOptions struct {
-	Driver  jsonql.Driver
-	Dialect string
-	Schema  *jsonql.JSONQLSchema
+	Driver        jsonql.Driver
+	Dialect       string
+	Schema        *jsonql.JSONQLSchema
+	AllowedTables []string          // Whitelist of allowed tables
+	TableMap      map[string]string // Alias -> RealTableName
 }
 
 // NewHandler creates a new JSONQL Echo handler
@@ -24,6 +26,11 @@ func NewHandler(opts HandlerOptions) (echo.HandlerFunc, error) {
 	dialect := opts.Dialect
 	if dialect == "" {
 		dialect = opts.Driver.Dialect()
+	}
+
+	allowed := make(map[string]bool)
+	for _, t := range opts.AllowedTables {
+		allowed[t] = true
 	}
 
 	parser := jsonql.NewParser()
@@ -53,6 +60,18 @@ func NewHandler(opts HandlerOptions) (echo.HandlerFunc, error) {
 			} else {
 				return c.JSON(http.StatusBadRequest, map[string]string{"error": "Query body must be a JSON object"})
 			}
+		}
+
+		// Security: Whitelisting
+		if len(allowed) > 0 {
+			if !allowed[tableName] {
+				return c.JSON(http.StatusForbidden, map[string]string{"error": "Forbidden"})
+			}
+		}
+
+		// Security: Table Mapping
+		if realName, ok := opts.TableMap[tableName]; ok {
+			tableName = realName
 		}
 
 		parsedQuery, err := parser.Parse(queryBody, opts.Schema, tableName)

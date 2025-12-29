@@ -11,18 +11,22 @@ import (
 
 // HandlerOptions configuration for the JSONQL HTTP handler
 type HandlerOptions struct {
-	Driver  jsonql.Driver
-	Dialect string // "sqlite", "postgres", etc. Defaults to "sqlite" or Driver.Dialect()
-	Schema  *jsonql.JSONQLSchema
+	Driver        jsonql.Driver
+	Dialect       string // "sqlite", "postgres", etc. Defaults to "sqlite" or Driver.Dialect()
+	Schema        *jsonql.JSONQLSchema
+	AllowedTables []string          // Whitelist of allowed tables
+	TableMap      map[string]string // Alias -> RealTableName
 }
 
 // Handler is an HTTP handler for JSONQL requests
 type Handler struct {
-	parser     *jsonql.Parser
-	transpiler *jsonql.Transpiler
-	driver     jsonql.Driver
-	hydrator   *jsonql.Hydrator
-	schema     *jsonql.JSONQLSchema
+	parser        *jsonql.Parser
+	transpiler    *jsonql.Transpiler
+	driver        jsonql.Driver
+	hydrator      *jsonql.Hydrator
+	schema        *jsonql.JSONQLSchema
+	allowedTables map[string]bool
+	tableMap      map[string]string
 }
 
 // NewHandler creates a new JSONQL HTTP handler
@@ -36,12 +40,19 @@ func NewHandler(opts HandlerOptions) (*Handler, error) {
 		dialect = opts.Driver.Dialect()
 	}
 
+	allowed := make(map[string]bool)
+	for _, t := range opts.AllowedTables {
+		allowed[t] = true
+	}
+
 	return &Handler{
-		parser:     jsonql.NewParser(),
-		transpiler: jsonql.NewTranspiler(dialect),
-		driver:     opts.Driver,
-		hydrator:   jsonql.NewHydrator(),
-		schema:     opts.Schema,
+		parser:        jsonql.NewParser(),
+		transpiler:    jsonql.NewTranspiler(dialect),
+		driver:        opts.Driver,
+		hydrator:      jsonql.NewHydrator(),
+		schema:        opts.Schema,
+		allowedTables: allowed,
+		tableMap:      opts.TableMap,
 	}, nil
 }
 
@@ -103,6 +114,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Query body must be a JSON object", http.StatusBadRequest)
 			return
 		}
+	}
+
+	// Security: Whitelisting
+	if len(h.allowedTables) > 0 {
+		if !h.allowedTables[tableName] {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+	}
+
+	// Security: Table Mapping
+	if realName, ok := h.tableMap[tableName]; ok {
+		tableName = realName
 	}
 
 	parsedQuery, err := h.parser.Parse(queryBody, h.schema, tableName)
