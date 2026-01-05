@@ -3,7 +3,13 @@ package jsonql
 import "fmt"
 
 type JSONQLSchema struct {
-	Tables map[string]*JSONQLTable `json:"tables"`
+	Tables   map[string]*JSONQLTable `json:"tables"`
+	Settings *JSONQLSettings         `json:"settings,omitempty"`
+}
+
+type JSONQLSettings struct {
+	AllowAggregate bool `json:"allowAggregate"`
+	MaxDepth       int  `json:"maxDepth"`
 }
 
 type JSONQLTable struct {
@@ -34,6 +40,19 @@ func NewValidator(schema *JSONQLSchema, table string) *Validator {
 }
 
 func (v *Validator) Validate(query *JSONQLQuery) error {
+	// Check global settings
+	if v.schema.Settings != nil {
+		if !v.schema.Settings.AllowAggregate && (len(query.Aggregate) > 0 || len(query.GroupBy) > 0) {
+			return fmt.Errorf("aggregations are disabled in this schema")
+		}
+		if v.schema.Settings.MaxDepth > 0 {
+			depth := v.calculateDepth(query)
+			if depth > v.schema.Settings.MaxDepth {
+				return fmt.Errorf("query depth %d exceeds maximum allowed depth of %d", depth, v.schema.Settings.MaxDepth)
+			}
+		}
+	}
+
 	table, ok := v.schema.Tables[v.table]
 	if !ok {
 		return fmt.Errorf("table '%s' not found in schema", v.table)
@@ -71,4 +90,38 @@ func (v *Validator) Validate(query *JSONQLQuery) error {
 	}
 
 	return nil
+}
+
+func (v *Validator) calculateDepth(query *JSONQLQuery) int {
+	if len(query.Include) == 0 {
+		return 0
+	}
+
+	maxChildDepth := 0
+	for _, subQueryRaw := range query.Include {
+		// Handle sub-query if it's a map (complex include)
+		if subQueryMap, ok := subQueryRaw.(map[string]interface{}); ok {
+			// We need to parse this map back to a query to check its depth recursively
+			// For simplicity in this MVP, we assume 1 level per include map entry if we can't fully parse it easily here without circular deps
+			// But ideally we should cast to *JSONQLQuery if possible or traverse the map
+			// Given the structure of Include map[string]interface{}, it might be just a boolean or a sub-query object.
+
+			// If it has "fields" or "include", it's a sub-query
+			if _, hasFields := subQueryMap["fields"]; hasFields {
+				// It's a sub-query, but we don't have the struct here easily without unmarshalling again or manual traversal.
+				// Let's do a rough estimation: if it has "include", recurse.
+				if nestedInclude, hasInclude := subQueryMap["include"]; hasInclude {
+					if nestedMap, ok := nestedInclude.(map[string]interface{}); ok {
+						// Create a dummy query to recurse
+						dummy := &JSONQLQuery{Include: nestedMap}
+						d := v.calculateDepth(dummy)
+						if d > maxChildDepth {
+							maxChildDepth = d
+						}
+					}
+				}
+			}
+		}
+	}
+	return 1 + maxChildDepth
 }

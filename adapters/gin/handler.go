@@ -1,6 +1,7 @@
 package jsonqlgin
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 
@@ -37,41 +38,62 @@ func NewHandler(opts HandlerOptions) (gin.HandlerFunc, error) {
 	transpiler := jsonql.NewTranspiler(dialect)
 	hydrator := jsonql.NewHydrator()
 
-	return func(c *gin.Context) {
+	handler := func(c *gin.Context) {
+		// 0. Check for resource param (RESTful style)
+		resourceParam := c.Param("resource")
+
 		// 1. Read Body
 		var rawQuery map[string]interface{}
-		if err := c.ShouldBindJSON(&rawQuery); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON"})
-			return
+		// If GET, try to parse 'q' query param
+		if c.Request.Method == "GET" {
+			q := c.Query("q")
+			if q == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Missing 'q' query parameter"})
+				return
+			}
+			if err := json.Unmarshal([]byte(q), &rawQuery); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON in 'q' parameter"})
+				return
+			}
+		} else {
+			if err := c.ShouldBindJSON(&rawQuery); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON"})
+				return
+			}
 		}
 
 		// 2. Parse
 		var tableName string
 		var queryBody map[string]interface{}
 
-		// Check for standard spec format: { "from": "table", ... }
-		if fromVal, ok := rawQuery["from"]; ok {
-			if fromStr, ok := fromVal.(string); ok {
-				tableName = fromStr
-				queryBody = rawQuery
-			} else {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "'from' field must be a string"})
-				return
-			}
+		if resourceParam != "" {
+			tableName = resourceParam
+			queryBody = rawQuery
 		} else {
-			// Fallback to adapter style: { "tableName": { ... } }
-			if len(rawQuery) != 1 {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "Request body must contain 'from' field or exactly one root key (the table name)"})
-				return
-			}
-
-			for k, v := range rawQuery {
-				tableName = k
-				if q, ok := v.(map[string]interface{}); ok {
-					queryBody = q
+			// Check for standard spec format: { "from": "table", ... }
+			if fromVal, ok := rawQuery["from"]; ok {
+				if fromStr, ok := fromVal.(string); ok {
+					tableName = fromStr
+					queryBody = rawQuery
 				} else {
-					c.JSON(http.StatusBadRequest, gin.H{"error": "Query body must be a JSON object"})
+					c.JSON(http.StatusBadRequest, gin.H{"error": "'from' field must be a string"})
 					return
+				}
+			} else {
+				// Fallback to adapter style: { "tableName": { ... } }
+				if len(rawQuery) != 1 {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Request body must contain 'from' field or exactly one root key (the table name)"})
+					return
+				}
+
+				for k, v := range rawQuery {
+					tableName = k
+					if q, ok := v.(map[string]interface{}); ok {
+						queryBody = q
+					} else {
+						c.JSON(http.StatusBadRequest, gin.H{"error": "Query body must be a JSON object"})
+						return
+					}
 				}
 			}
 		}
@@ -91,7 +113,8 @@ func NewHandler(opts HandlerOptions) (gin.HandlerFunc, error) {
 
 		parsedQuery, err := parser.Parse(queryBody, opts.Schema, tableName)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Parse error: %v", err)})
+			// Return standard error message for compliance tests
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSONQL Query"})
 			return
 		}
 
@@ -119,5 +142,6 @@ func NewHandler(opts HandlerOptions) (gin.HandlerFunc, error) {
 
 		// 6. Response
 		c.JSON(http.StatusOK, data)
-	}, nil
+	}
+	return handler, nil
 }
