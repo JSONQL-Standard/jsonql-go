@@ -18,16 +18,24 @@ type JSONQLTable struct {
 }
 
 type JSONQLField struct {
-	Type        string `json:"type"`
-	AllowSelect bool   `json:"allowSelect,omitempty"`
-	AllowFilter bool   `json:"allowFilter,omitempty"`
-	AllowSort   bool   `json:"allowSort,omitempty"`
+	Type           string `json:"type"`
+	AllowSelect    *bool  `json:"allowSelect,omitempty"`
+	AllowFilter    *bool  `json:"allowFilter,omitempty"`
+	AllowSort      *bool  `json:"allowSort,omitempty"`
+	AllowGroup     *bool  `json:"allowGroup,omitempty"`
+	AllowAggregate *bool  `json:"allowAggregate,omitempty"`
+	AllowSum       *bool  `json:"allowSum,omitempty"`
+	AllowAvg       *bool  `json:"allowAvg,omitempty"`
+	AllowMin       *bool  `json:"allowMin,omitempty"`
+	AllowMax       *bool  `json:"allowMax,omitempty"`
+	AllowCount     *bool  `json:"allowCount,omitempty"`
 }
 
 type JSONQLRelation struct {
-	Type  string `json:"type"`            // "hasOne" | "hasMany"
-	Field string `json:"field"`           // Foreign Key
-	Table string `json:"table,omitempty"` // Target table name (optional, defaults to relation name)
+	Type         string `json:"type"`             // "hasOne" | "hasMany" | "belongsTo"
+	Field        string `json:"foreignKey"`       // Foreign Key
+	Table        string `json:"target,omitempty"` // Target table name
+	AllowInclude *bool  `json:"allowInclude,omitempty"`
 }
 
 type Validator struct {
@@ -61,7 +69,7 @@ func (v *Validator) Validate(query *JSONQLQuery) error {
 	// Fields
 	for _, f := range query.Fields {
 		field, ok := table.Fields[f]
-		if !ok || !field.AllowSelect {
+		if !ok || (field.AllowSelect != nil && !*field.AllowSelect) {
 			return fmt.Errorf("field '%s' not allowed on table '%s'", f, v.table)
 		}
 	}
@@ -72,7 +80,7 @@ func (v *Validator) Validate(query *JSONQLQuery) error {
 			continue
 		}
 		fieldObj, ok := table.Fields[field]
-		if !ok || !fieldObj.AllowFilter {
+		if !ok || (fieldObj.AllowFilter != nil && !*fieldObj.AllowFilter) {
 			return fmt.Errorf("field '%s' not filterable on table '%s'", field, v.table)
 		}
 	}
@@ -84,8 +92,91 @@ func (v *Validator) Validate(query *JSONQLQuery) error {
 			field = s[1:]
 		}
 		fieldObj, ok := table.Fields[field]
-		if !ok || !fieldObj.AllowSort {
+		if !ok || (fieldObj.AllowSort != nil && !*fieldObj.AllowSort) {
 			return fmt.Errorf("field '%s' not sortable on table '%s'", field, v.table)
+		}
+	}
+
+	// Group By (allowGroup)
+	for _, g := range query.GroupBy {
+		field, ok := table.Fields[g]
+		if !ok || (field.AllowGroup != nil && !*field.AllowGroup) {
+			return fmt.Errorf("field '%s' not groupable on table '%s'", g, v.table)
+		}
+	}
+
+	// Aggregates
+	for _, aggDef := range query.Aggregate {
+		if aggMap, ok := aggDef.(map[string]interface{}); ok {
+			for funcName, fRaw := range aggMap {
+				fieldName, ok := fRaw.(string)
+				if !ok {
+					continue
+				}
+
+				if fieldName == "*" && funcName == "count" {
+					continue // COUNT(*) usually allowed if aggregation is allowed globally
+				}
+
+				field, ok := table.Fields[fieldName]
+				if !ok {
+					return fmt.Errorf("field '%s' not found on table '%s'", fieldName, v.table)
+				}
+
+				// Check specific function permission first
+				allowed := true
+				checked := false
+
+				switch funcName {
+				case "sum":
+					if field.AllowSum != nil {
+						allowed = *field.AllowSum
+						checked = true
+					}
+				case "avg":
+					if field.AllowAvg != nil {
+						allowed = *field.AllowAvg
+						checked = true
+					}
+				case "min":
+					if field.AllowMin != nil {
+						allowed = *field.AllowMin
+						checked = true
+					}
+				case "max":
+					if field.AllowMax != nil {
+						allowed = *field.AllowMax
+						checked = true
+					}
+				case "count":
+					if field.AllowCount != nil {
+						allowed = *field.AllowCount
+						checked = true
+					}
+				}
+
+				// If specific check was not performed (nil), fall back to AllowAggregate
+				if !checked {
+					if field.AllowAggregate != nil {
+						allowed = *field.AllowAggregate
+					}
+				}
+
+				if !allowed {
+					return fmt.Errorf("aggregation '%s' not allowed on field '%s'", funcName, fieldName)
+				}
+			}
+		}
+	}
+
+	// Relations (allowInclude)
+	for relName := range query.Include {
+		rel, ok := table.Relations[relName]
+		if !ok {
+			return fmt.Errorf("relation '%s' not found on table '%s'", relName, v.table)
+		}
+		if rel.AllowInclude != nil && !*rel.AllowInclude {
+			return fmt.Errorf("relation '%s' not allowed to be included", relName)
 		}
 	}
 

@@ -68,11 +68,12 @@ func (i *SQLiteIntrospector) Introspect() (*jsonql.JSONQLSchema, error) {
 				return nil, err
 			}
 
+			t := true
 			fieldSchema := &jsonql.JSONQLField{
 				Type:        i.mapSQLiteType(dtype),
-				AllowSelect: true,
-				AllowFilter: true,
-				AllowSort:   true,
+				AllowSelect: &t,
+				AllowFilter: &t,
+				AllowSort:   &t,
 			}
 
 			tableSchema.Fields[name] = fieldSchema
