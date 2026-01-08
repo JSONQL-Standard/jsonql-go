@@ -40,6 +40,14 @@ func (t *Transpiler) Transpile(query *JSONQLQuery, tableName string, schema *JSO
 			}
 			selectParts = append(selectParts, fmt.Sprintf("%s.%s", t.quoteIdentifier(tableName), t.quoteIdentifier(f)))
 		}
+	} else if len(query.GroupBy) > 0 {
+		// If fields are empty but GroupBy is present, automatically select the group keys
+		for _, g := range query.GroupBy {
+			if !isValidIdentifier(g) {
+				return nil, fmt.Errorf("Invalid group by field: %s", g)
+			}
+			selectParts = append(selectParts, fmt.Sprintf("%s.%s", t.quoteIdentifier(tableName), t.quoteIdentifier(g)))
+		}
 	}
 
 	// Handle Aggregates (Main Table)
@@ -162,7 +170,7 @@ func (t *Transpiler) Transpile(query *JSONQLQuery, tableName string, schema *JSO
 	}
 
 	return &TranspileResult{
-		SQL:  sqlStr,
+		SQL:  t.replacePlaceholders(sqlStr),
 		Args: args,
 	}, nil
 }
@@ -428,12 +436,20 @@ func (t *Transpiler) processWhere(where map[string]interface{}, tableAlias strin
 
 		if valMap, ok := cond.(map[string]interface{}); ok {
 			if v, ok := valMap["eq"]; ok {
-				conditions = append(conditions, fmt.Sprintf("%s.%s = ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
-				args = append(args, v)
+				if v == nil {
+					conditions = append(conditions, fmt.Sprintf("%s.%s IS NULL", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
+				} else {
+					conditions = append(conditions, fmt.Sprintf("%s.%s = ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
+					args = append(args, v)
+				}
 			}
 			if v, ok := valMap["neq"]; ok {
-				conditions = append(conditions, fmt.Sprintf("%s.%s != ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
-				args = append(args, v)
+				if v == nil {
+					conditions = append(conditions, fmt.Sprintf("%s.%s IS NOT NULL", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
+				} else {
+					conditions = append(conditions, fmt.Sprintf("%s.%s != ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
+					args = append(args, v)
+				}
 			}
 			if v, ok := valMap["gt"]; ok {
 				conditions = append(conditions, fmt.Sprintf("%s.%s > ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
@@ -466,8 +482,12 @@ func (t *Transpiler) processWhere(where map[string]interface{}, tableAlias strin
 				}
 			}
 		} else {
-			conditions = append(conditions, fmt.Sprintf("%s.%s = ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
-			args = append(args, cond)
+			if cond == nil {
+				conditions = append(conditions, fmt.Sprintf("%s.%s IS NULL", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
+			} else {
+				conditions = append(conditions, fmt.Sprintf("%s.%s = ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
+				args = append(args, cond)
+			}
 		}
 	}
 	return conditions, args, nil
@@ -482,9 +502,9 @@ func (t *Transpiler) replacePlaceholders(sql string) string {
 			sb.WriteString(sql)
 			break
 		}
-		count++
 		sb.WriteString(sql[:i])
-		sb.WriteString(fmt.Sprintf("$%d", count))
+		sb.WriteString(t.Dialect.Placeholder(count))
+		count++
 		sql = sql[i+1:]
 	}
 	return sb.String()

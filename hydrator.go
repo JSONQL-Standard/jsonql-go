@@ -3,6 +3,7 @@ package jsonql
 import (
 	"database/sql"
 	"log"
+	"strconv"
 	"strings"
 )
 
@@ -21,7 +22,7 @@ func (h *Hydrator) Hydrate(rows *sql.Rows, schema *JSONQLSchema, rootTable strin
 		return nil, err
 	}
 
-	var rawRows []map[string]interface{}
+	rawRows := []map[string]interface{}{}
 
 	for rows.Next() {
 		// Create a slice of interface{} to hold pointers to values
@@ -43,7 +44,12 @@ func (h *Hydrator) Hydrate(rows *sql.Rows, schema *JSONQLSchema, rootTable strin
 			if val == nil {
 				finalVal = nil
 			} else if b, ok := val.([]byte); ok {
-				finalVal = string(b)
+				s := string(b)
+				if f, err := strconv.ParseFloat(s, 64); err == nil {
+					finalVal = f
+				} else {
+					finalVal = s
+				}
 			} else {
 				finalVal = val
 			}
@@ -110,7 +116,7 @@ func (h *Hydrator) Hydrate(rows *sql.Rows, schema *JSONQLSchema, rootTable strin
 // MergeRows groups rows by ID and merges relationships
 func (h *Hydrator) MergeRows(rows []map[string]interface{}, schema *JSONQLSchema, tableName string) []map[string]interface{} {
 	if len(rows) == 0 {
-		return nil
+		return []map[string]interface{}{}
 	}
 
 	// Group by ID
