@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	jsonqlgin "github.com/jsonql-standard/jsonql-go/adapters/gin"
+	jsonqlhttp "github.com/jsonql-standard/jsonql-go/adapters/http"
 	"github.com/jsonql-standard/jsonql-go/drivers/sqlite"
 	_ "modernc.org/sqlite" // Register sqlite driver
 )
@@ -35,7 +36,9 @@ func TestGinHandler(t *testing.T) {
 
 	// 2. Setup Handler
 	handler, err := jsonqlgin.NewHandler(jsonqlgin.HandlerOptions{
-		Driver: driver,
+		AdapterOptions: jsonqlhttp.AdapterOptions{
+			Driver: driver,
+		},
 	})
 	if err != nil {
 		t.Fatalf("Failed to create handler: %v", err)

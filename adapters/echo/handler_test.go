@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	jsonqlecho "github.com/jsonql-standard/jsonql-go/adapters/echo"
+	jsonqlhttp "github.com/jsonql-standard/jsonql-go/adapters/http"
 	"github.com/jsonql-standard/jsonql-go/drivers/sqlite"
 	"github.com/labstack/echo/v4"
 	_ "modernc.org/sqlite" // Register sqlite driver
@@ -35,7 +36,9 @@ func TestEchoHandler(t *testing.T) {
 
 	// 2. Setup Handler
 	handler, err := jsonqlecho.NewHandler(jsonqlecho.HandlerOptions{
-		Driver: driver,
+		AdapterOptions: jsonqlhttp.AdapterOptions{
+			Driver: driver,
+		},
 	})
 	if err != nil {
 		t.Fatalf("Failed to create handler: %v", err)
