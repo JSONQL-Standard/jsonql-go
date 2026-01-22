@@ -161,9 +161,9 @@ func TestHydrator_MergeRows(t *testing.T) {
 			},
 			expected: []map[string]interface{}{
 				{
-					"id":   1,
-					"name": "Alice",
-					"posts": map[string]interface{}{"count": 5},
+					"id":      1,
+					"name":    "Alice",
+					"posts":   map[string]interface{}{"count": 5},
 					"profile": nil,
 				},
 			},

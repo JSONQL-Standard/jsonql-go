@@ -44,10 +44,10 @@ func (m *Manager) Load() (*jsonql.JSONQLSchema, error) {
 		if err == nil {
 			m.mergeSchemas(finalSchema, fileSchema)
 		}
-		// Note: We ignore file load errors if file doesn't exist or is invalid, 
-		// similar to the TS implementation which warns but proceeds. 
-		// For Go, maybe we should log or return error? 
-		// The TS implementation catches error and warns. 
+		// Note: We ignore file load errors if file doesn't exist or is invalid,
+		// similar to the TS implementation which warns but proceeds.
+		// For Go, maybe we should log or return error?
+		// The TS implementation catches error and warns.
 		// Here we'll just proceed if error (e.g. file not found).
 	}
 
