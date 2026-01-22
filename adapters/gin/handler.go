@@ -6,14 +6,12 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jsonql-standard/jsonql-go"
+	jsonqlhttp "github.com/jsonql-standard/jsonql-go/adapters/http"
 )
 
 // HandlerOptions configuration for the JSONQL Gin handler
 type HandlerOptions struct {
-	Driver        jsonql.Driver
-	Dialect       string
-	Schema        *jsonql.JSONQLSchema
+	jsonqlhttp.AdapterOptions
 	AllowedTables []string          // Whitelist of allowed tables
 	TableMap      map[string]string // Alias -> RealTableName
 }
@@ -24,19 +22,15 @@ func NewHandler(opts HandlerOptions) (gin.HandlerFunc, error) {
 		return nil, fmt.Errorf("driver is required")
 	}
 
-	dialect := opts.Dialect
-	if dialect == "" {
-		dialect = opts.Driver.Dialect()
-	}
-
 	allowed := make(map[string]bool)
 	for _, t := range opts.AllowedTables {
 		allowed[t] = true
 	}
 
-	parser := jsonql.NewParser()
-	transpiler := jsonql.NewTranspiler(dialect)
-	hydrator := jsonql.NewHydrator()
+	adapter, err := jsonqlhttp.NewAdapter(opts.AdapterOptions)
+	if err != nil {
+		return nil, err
+	}
 
 	handler := func(c *gin.Context) {
 		// 0. Check for resource param (RESTful style)
@@ -111,37 +105,14 @@ func NewHandler(opts HandlerOptions) (gin.HandlerFunc, error) {
 			tableName = realName
 		}
 
-		parsedQuery, err := parser.Parse(queryBody, opts.Schema, tableName)
+		resp, err := adapter.Handle(queryBody, tableName, c.Request)
 		if err != nil {
-			// Return standard error message for compliance tests
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSONQL Query"})
+			herr := jsonqlhttp.WrapError(err)
+			c.JSON(herr.Status, gin.H{"error": herr.Message})
 			return
 		}
 
-		// 3. Transpile
-		result, err := transpiler.Transpile(parsedQuery, tableName, opts.Schema)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Transpile error: %v", err)})
-			return
-		}
-
-		// 4. Execute
-		rows, err := opts.Driver.Query(c.Request.Context(), result.SQL, result.Args)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Database error: %v", err)})
-			return
-		}
-		defer rows.Close()
-
-		// 5. Hydrate
-		data, err := hydrator.Hydrate(rows, opts.Schema, tableName)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Hydration error: %v", err)})
-			return
-		}
-
-		// 6. Response
-		c.JSON(http.StatusOK, data)
+		c.JSON(resp.Status, resp.Data)
 	}
 	return handler, nil
 }

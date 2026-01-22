@@ -20,11 +20,7 @@ type HandlerOptions struct {
 
 // Handler is an HTTP handler for JSONQL requests
 type Handler struct {
-	parser        *jsonql.Parser
-	transpiler    *jsonql.Transpiler
-	driver        jsonql.Driver
-	hydrator      *jsonql.Hydrator
-	schema        *jsonql.JSONQLSchema
+	adapter       *Adapter
 	allowedTables map[string]bool
 	tableMap      map[string]string
 }
@@ -45,12 +41,17 @@ func NewHandler(opts HandlerOptions) (*Handler, error) {
 		allowed[t] = true
 	}
 
+	adapter, err := NewAdapter(AdapterOptions{
+		Driver:  opts.Driver,
+		Dialect: dialect,
+		Schema:  opts.Schema,
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	return &Handler{
-		parser:        jsonql.NewParser(),
-		transpiler:    jsonql.NewTranspiler(dialect),
-		driver:        opts.Driver,
-		hydrator:      jsonql.NewHydrator(),
-		schema:        opts.Schema,
+		adapter:       adapter,
 		allowedTables: allowed,
 		tableMap:      opts.TableMap,
 	}, nil
@@ -129,35 +130,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		tableName = realName
 	}
 
-	parsedQuery, err := h.parser.Parse(queryBody, h.schema, tableName)
+	resp, err := h.adapter.Handle(queryBody, tableName, r)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Parse error: %v", err), http.StatusBadRequest)
+		herr := WrapError(err)
+		http.Error(w, herr.Message, herr.Status)
 		return
 	}
 
-	// 4. Transpile
-	result, err := h.transpiler.Transpile(parsedQuery, tableName, h.schema)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Transpile error: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	// 5. Execute
-	rows, err := h.driver.Query(r.Context(), result.SQL, result.Args)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Database error: %v", err), http.StatusInternalServerError)
-		return
-	}
-	defer rows.Close()
-
-	// 6. Hydrate
-	data, err := h.hydrator.Hydrate(rows, h.schema, tableName)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Hydration error: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	// 7. Response
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(data)
+	w.WriteHeader(resp.Status)
+	json.NewEncoder(w).Encode(resp.Data)
 }
