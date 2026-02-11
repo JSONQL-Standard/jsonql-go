@@ -105,13 +105,24 @@ func (t *Transpiler) Transpile(query *JSONQLQuery, tableName string, schema *JSO
 		selectClause = strings.Join(selectParts, ", ")
 	}
 
+	// Handle DISTINCT
+	distinctKeyword := ""
+	if query.Distinct != nil {
+		if query.Distinct.All {
+			distinctKeyword = "DISTINCT "
+		} else if len(query.Distinct.Fields) > 0 {
+			// DISTINCT ON is Postgres-only; for portability, use SELECT DISTINCT with specific fields
+			distinctKeyword = "DISTINCT "
+		}
+	}
+
 	// 3. FROM clause
 	fromClause := t.quoteIdentifier(tableName)
 	if len(joinParts) > 0 {
 		fromClause += " " + strings.Join(joinParts, " ")
 	}
 
-	sqlStr := fmt.Sprintf("SELECT %s FROM %s", selectClause, fromClause)
+	sqlStr := fmt.Sprintf("SELECT %s%s FROM %s", distinctKeyword, selectClause, fromClause)
 
 	// 4. WHERE clause (Main Table)
 	if query.Where != nil {
@@ -180,7 +191,7 @@ func (t *Transpiler) processJoin(
 	include map[string]interface{},
 	parentTable string,
 	parentAlias string,
-	hydratorPath string, // e.g. "items", "items___product"
+	hydratorPath string, // e.g. "items", "items__product"
 	schema *JSONQLSchema,
 	selectParts *[]string,
 	joinParts *[]string,
@@ -214,7 +225,7 @@ func (t *Transpiler) processJoin(
 			currentHydratorPath = relName
 		} else {
 			currentTableAlias = parentAlias + "_" + relName
-			currentHydratorPath = hydratorPath + "___" + relName
+			currentHydratorPath = hydratorPath + "__" + relName
 		}
 
 		relMap, ok := relConfig.(map[string]interface{})
@@ -268,8 +279,8 @@ func (t *Transpiler) processJoin(
 			for _, f := range fields {
 				fieldName, ok := f.(string)
 				if ok {
-					// Alias: currentHydratorPath___fieldName
-					alias := fmt.Sprintf("%s___%s", currentHydratorPath, fieldName)
+					// Alias: currentHydratorPath__fieldName
+					alias := fmt.Sprintf("%s__%s", currentHydratorPath, fieldName)
 					*selectParts = append(*selectParts, fmt.Sprintf("%s.%s AS %s", t.quoteIdentifier(currentTableAlias), t.quoteIdentifier(fieldName), t.quoteIdentifier(alias)))
 				}
 			}
@@ -330,8 +341,8 @@ func (t *Transpiler) processJoin(
 						t.quoteIdentifier(subAlias),
 						strings.Join(subWhere, " AND "))
 
-					// Alias: currentHydratorPath___alias
-					finalAlias := fmt.Sprintf("%s___%s", currentHydratorPath, alias)
+					// Alias: currentHydratorPath__alias
+					finalAlias := fmt.Sprintf("%s__%s", currentHydratorPath, alias)
 					*selectParts = append(*selectParts, fmt.Sprintf("%s AS %s", fullSubQuery, t.quoteIdentifier(finalAlias)))
 				}
 			}

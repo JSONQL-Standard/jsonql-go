@@ -2,7 +2,6 @@ package jsonql
 
 import (
 	"database/sql"
-	"log"
 	"strconv"
 	"strings"
 )
@@ -54,8 +53,8 @@ func (h *Hydrator) Hydrate(rows *sql.Rows, schema *JSONQLSchema, rootTable strin
 				finalVal = val
 			}
 
-			if strings.Contains(colName, "___") {
-				parts := strings.Split(colName, "___")
+			if strings.Contains(colName, "__") {
+				parts := strings.Split(colName, "__")
 				currentMap := rowMap
 
 				// Traverse the path
@@ -75,7 +74,7 @@ func (h *Hydrator) Hydrate(rows *sql.Rows, schema *JSONQLSchema, rootTable strin
 					// Let's keep building it as a map, and then wrap it if needed?
 					// Or wrap it immediately?
 
-					// If we wrap it immediately, subsequent fields (items___name) need to find the map INSIDE the slice.
+					// If we wrap it immediately, subsequent fields (items__name) need to find the map INSIDE the slice.
 
 					val := currentMap[part]
 					if m, ok := val.(map[string]interface{}); ok {
@@ -267,7 +266,6 @@ func (h *Hydrator) MergeRows(rows []map[string]interface{}, schema *JSONQLSchema
 				}
 			}
 		}
-		log.Printf("Merged row: %+v\n", merged)
 		results = append(results, merged)
 	}
 

@@ -34,6 +34,27 @@ type JSONQLQuery struct {
 	Aggregate map[string]interface{} `json:"aggregate,omitempty"`
 	GroupBy   []string               `json:"groupBy,omitempty"`
 	Include   map[string]interface{} `json:"include,omitempty"`
+	Distinct  *DistinctOption        `json:"distinct,omitempty"`
+}
+
+// DistinctOption represents a "distinct" clause: true (all fields) or a list of specific fields.
+type DistinctOption struct {
+	All    bool     // true when distinct: true
+	Fields []string // non-nil when distinct: ["field1", "field2"]
+}
+
+func (d *DistinctOption) UnmarshalJSON(data []byte) error {
+	var b bool
+	if err := json.Unmarshal(data, &b); err == nil {
+		d.All = b
+		return nil
+	}
+	var fields []string
+	if err := json.Unmarshal(data, &fields); err == nil {
+		d.Fields = fields
+		return nil
+	}
+	return errors.New("distinct must be a boolean or array of strings")
 }
 
 // JSONQLMutation represents a mutation operation (create, update, delete)

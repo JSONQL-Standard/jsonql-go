@@ -39,16 +39,26 @@ import (
 func main() {
 	// 1. Define your Schema
 	schema := &jsonql.JSONQLSchema{
-		Tables: map[string]jsonql.TableSchema{
+		Tables: map[string]*jsonql.JSONQLTable{
 			"users": {
-				Fields: []string{"id", "name", "email", "created_at"},
-				Relationships: map[string]jsonql.Relationship{
+				Fields: map[string]*jsonql.JSONQLField{
+					"id":         {Type: "number"},
+					"name":       {Type: "string"},
+					"email":      {Type: "string"},
+					"created_at": {Type: "date"},
+				},
+				Relations: map[string]*jsonql.JSONQLRelation{
 					"posts": {Type: "hasMany", Table: "posts", Field: "user_id"},
 				},
 			},
 			"posts": {
-				Fields: []string{"id", "user_id", "title", "content"},
-				Relationships: map[string]jsonql.Relationship{
+				Fields: map[string]*jsonql.JSONQLField{
+					"id":      {Type: "number"},
+					"user_id": {Type: "number"},
+					"title":   {Type: "string"},
+					"content": {Type: "string"},
+				},
+				Relations: map[string]*jsonql.JSONQLRelation{
 					"author": {Type: "belongsTo", Table: "users", Field: "user_id"},
 				},
 			},
