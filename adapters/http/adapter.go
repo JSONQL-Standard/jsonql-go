@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
-	"sort"
 	"strings"
 
 	"github.com/jsonql-standard/jsonql-go"
@@ -17,6 +16,7 @@ type QueryResultHook func(result []map[string]interface{}, r *http.Request) ([]m
 type MutationHook func(mutation map[string]interface{}, r *http.Request) (map[string]interface{}, error)
 type MutationResultHook func(result Response, mutation map[string]interface{}, r *http.Request) (Response, error)
 type MutationStatusResolver func(op string, r *http.Request, mutation map[string]interface{}) int
+type ParserOptionsResolver func(r *http.Request) *jsonql.ParserOptions
 
 type HandlerError struct {
 	Status  int
@@ -43,7 +43,9 @@ type AdapterOptions struct {
 	BeforeDelete MutationHook
 	AfterDelete  MutationResultHook
 
-	MutationStatus MutationStatusResolver
+	MutationStatus       MutationStatusResolver
+	ParserOptions        *jsonql.ParserOptions
+	ParserOptionsResolve ParserOptionsResolver
 }
 
 type Response struct {
@@ -74,8 +76,13 @@ func NewAdapter(opts AdapterOptions) (*Adapter, error) {
 		}
 	}
 
+	parser := jsonql.NewParser()
+	if opts.ParserOptions != nil {
+		parser = jsonql.NewParserWithOptions(opts.ParserOptions)
+	}
+
 	return &Adapter{
-		parser:     jsonql.NewParser(),
+		parser:     parser,
 		transpiler: jsonql.NewTranspiler(dialect),
 		driver:     opts.Driver,
 		hydrator:   jsonql.NewHydrator(),
@@ -111,7 +118,15 @@ func (a *Adapter) handleQuery(raw map[string]interface{}, tableName string, r *h
 		validationSchema = nil
 	}
 
-	parsedQuery, err := a.parser.Parse(query, validationSchema, tableName)
+	// Per-request parser options
+	parser := a.parser
+	if a.options.ParserOptionsResolve != nil {
+		if opts := a.options.ParserOptionsResolve(r); opts != nil {
+			parser = jsonql.NewParserWithOptions(opts)
+		}
+	}
+
+	parsedQuery, err := parser.Parse(query, validationSchema, tableName)
 	if err != nil {
 		return Response{}, &HandlerError{Status: http.StatusBadRequest, Message: "Invalid JSONQL Query"}
 	}
@@ -165,18 +180,27 @@ func (a *Adapter) handleMutation(op string, raw map[string]interface{}, tableNam
 			return Response{}, &HandlerError{Status: http.StatusBadRequest, Message: "Invalid JSONQL Query"}
 		}
 		if _, ok := data["id"]; !ok {
-			nextID, err := getNextID(r.Context(), a.driver, tableName)
+			nextID, err := getNextID(r.Context(), a.driver, tableName, a.transpiler)
 			if err == nil {
 				data["id"] = nextID
 			}
 		}
-		fields, values := buildInsertParts(data)
-		placeholders := buildPlaceholders(a.driver.Dialect(), len(fields))
-		sqlStmt := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", tableName, strings.Join(fields, ", "), strings.Join(placeholders, ", "))
-		if _, err := a.driver.Execute(r.Context(), sqlStmt, values); err != nil {
+
+		result, err := a.transpiler.TranspileInsert(tableName, data)
+		if err != nil {
+			return Response{}, &HandlerError{Status: http.StatusBadRequest, Message: fmt.Sprintf("Transpile error: %v", err)}
+		}
+		if _, err := a.driver.Execute(r.Context(), result.SQL, result.Args); err != nil {
 			return Response{}, &HandlerError{Status: http.StatusInternalServerError, Message: fmt.Sprintf("Database error: %v", err)}
 		}
-		resp := Response{Status: status, Data: data}
+
+		// For non-RETURNING dialects, return the data map directly
+		var respData interface{} = data
+		if a.transpiler.Dialect.SupportsReturning() {
+			// Could parse RETURNING rows here for richer response
+			respData = data
+		}
+		resp := Response{Status: status, Data: respData}
 		if a.options.AfterCreate != nil {
 			return a.options.AfterCreate(resp, mutation, r)
 		}
@@ -196,18 +220,12 @@ func (a *Adapter) handleMutation(op string, raw map[string]interface{}, tableNam
 			return Response{}, &HandlerError{Status: http.StatusBadRequest, Message: "Invalid JSONQL Query"}
 		}
 		where, _ := mutation["where"].(map[string]interface{})
-		id, ok := extractIDFromWhere(where)
-		if !ok {
-			return Response{}, &HandlerError{Status: http.StatusBadRequest, Message: "Invalid JSONQL Query"}
+
+		result, err := a.transpiler.TranspileUpdate(tableName, patch, where)
+		if err != nil {
+			return Response{}, &HandlerError{Status: http.StatusBadRequest, Message: fmt.Sprintf("Transpile error: %v", err)}
 		}
-		setParts, values := buildUpdateParts(patch, a.driver.Dialect())
-		wherePlaceholder := "?"
-		if a.driver.Dialect() == "postgres" {
-			wherePlaceholder = fmt.Sprintf("$%d", len(values)+1)
-		}
-		values = append(values, id)
-		sqlStmt := fmt.Sprintf("UPDATE %s SET %s WHERE id = %s", tableName, strings.Join(setParts, ", "), wherePlaceholder)
-		if _, err := a.driver.Execute(r.Context(), sqlStmt, values); err != nil {
+		if _, err := a.driver.Execute(r.Context(), result.SQL, result.Args); err != nil {
 			return Response{}, &HandlerError{Status: http.StatusInternalServerError, Message: fmt.Sprintf("Database error: %v", err)}
 		}
 		resp := Response{Status: status, Data: []map[string]interface{}{}}
@@ -226,16 +244,12 @@ func (a *Adapter) handleMutation(op string, raw map[string]interface{}, tableNam
 			}
 		}
 		where, _ := mutation["where"].(map[string]interface{})
-		id, ok := extractIDFromWhere(where)
-		if !ok {
-			return Response{}, &HandlerError{Status: http.StatusBadRequest, Message: "Invalid JSONQL Query"}
+
+		result, err := a.transpiler.TranspileDelete(tableName, where)
+		if err != nil {
+			return Response{}, &HandlerError{Status: http.StatusBadRequest, Message: fmt.Sprintf("Transpile error: %v", err)}
 		}
-		placeholder := "?"
-		if a.driver.Dialect() == "postgres" {
-			placeholder = "$1"
-		}
-		sqlStmt := fmt.Sprintf("DELETE FROM %s WHERE id = %s", tableName, placeholder)
-		if _, err := a.driver.Execute(r.Context(), sqlStmt, []interface{}{id}); err != nil {
+		if _, err := a.driver.Execute(r.Context(), result.SQL, result.Args); err != nil {
 			return Response{}, &HandlerError{Status: http.StatusInternalServerError, Message: fmt.Sprintf("Database error: %v", err)}
 		}
 		resp := Response{Status: status, Data: []map[string]interface{}{}}
@@ -282,52 +296,31 @@ func extractIDFromWhere(where map[string]interface{}) (interface{}, bool) {
 	return raw, true
 }
 
-func buildInsertParts(data map[string]interface{}) ([]string, []interface{}) {
-	fields := make([]string, 0, len(data))
-	for k := range data {
-		fields = append(fields, k)
+// InferMutationFromHTTP infers the JSONQL mutation operation from the HTTP method.
+// POST → create, PUT/PATCH → update, DELETE → delete.
+func InferMutationFromHTTP(method string, body map[string]interface{}) map[string]interface{} {
+	if body == nil {
+		body = map[string]interface{}{}
 	}
-	sort.Strings(fields)
-	values := make([]interface{}, 0, len(fields))
-	for _, f := range fields {
-		values = append(values, data[f])
+	// If op is already set, return as-is
+	if _, ok := body["op"]; ok {
+		return body
 	}
-	return fields, values
+	switch strings.ToUpper(method) {
+	case "POST":
+		body["op"] = "create"
+	case "PUT", "PATCH":
+		body["op"] = "update"
+	case "DELETE":
+		body["op"] = "delete"
+	}
+	return body
 }
 
-func buildUpdateParts(patch map[string]interface{}, dialect string) ([]string, []interface{}) {
-	fields := make([]string, 0, len(patch))
-	for k := range patch {
-		fields = append(fields, k)
-	}
-	sort.Strings(fields)
-	setParts := make([]string, 0, len(fields))
-	values := make([]interface{}, 0, len(fields))
-	for idx, f := range fields {
-		placeholder := "?"
-		if dialect == "postgres" {
-			placeholder = fmt.Sprintf("$%d", idx+1)
-		}
-		setParts = append(setParts, fmt.Sprintf("%s = %s", f, placeholder))
-		values = append(values, patch[f])
-	}
-	return setParts, values
-}
-
-func buildPlaceholders(dialect string, count int) []string {
-	placeholders := make([]string, count)
-	for i := 0; i < count; i++ {
-		if dialect == "postgres" {
-			placeholders[i] = fmt.Sprintf("$%d", i+1)
-		} else {
-			placeholders[i] = "?"
-		}
-	}
-	return placeholders
-}
-
-func getNextID(ctx context.Context, driver jsonql.Driver, tableName string) (int64, error) {
-	query := fmt.Sprintf("SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM %s", tableName)
+func getNextID(ctx context.Context, driver jsonql.Driver, tableName string, transpiler *jsonql.Transpiler) (int64, error) {
+	query := fmt.Sprintf("SELECT COALESCE(MAX(%s), 0) + 1 AS next_id FROM %s",
+		transpiler.Dialect.QuoteIdentifier("id"),
+		transpiler.Dialect.QuoteIdentifier(tableName))
 	rows, err := driver.Query(ctx, query, nil)
 	if err != nil {
 		return 0, err
