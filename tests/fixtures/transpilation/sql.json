@@ -7,7 +7,7 @@
       "version": "1.0",
       "fields": ["id", "name"]
     },
-    "expectedSQL": "SELECT users.id, users.name FROM users"
+    "expectedSQL": "SELECT \"users\".\"id\", \"users\".\"name\" FROM \"users\""
   },
   {
     "id": "sql-002",
@@ -16,7 +16,7 @@
     "query": {
       "version": "1.0"
     },
-    "expectedSQL": "SELECT * FROM products"
+    "expectedSQL": "SELECT * FROM \"products\""
   },
   {
     "id": "sql-003",
@@ -29,7 +29,7 @@
         "status": { "eq": "active" }
       }
     },
-    "expectedSQL": "SELECT users.id FROM users WHERE users.status = ?",
+    "expectedSQL": "SELECT \"users\".\"id\" FROM \"users\" WHERE \"users\".\"status\" = ?",
     "expectedArgs": ["active"]
   }
 ]
