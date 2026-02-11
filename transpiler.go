@@ -2,6 +2,7 @@ package jsonql
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -516,4 +517,133 @@ func (t *Transpiler) placeholder(index int) string {
 
 func (t *Transpiler) quoteIdentifier(name string) string {
 	return t.Dialect.QuoteIdentifier(name)
+}
+
+// TranspileInsert generates an INSERT SQL statement from a table name and data map
+func (t *Transpiler) TranspileInsert(tableName string, data map[string]interface{}) (*TranspileResult, error) {
+	if len(data) == 0 {
+		return nil, fmt.Errorf("insert data cannot be empty")
+	}
+	if !isValidIdentifier(tableName) {
+		return nil, fmt.Errorf("invalid table name: %s", tableName)
+	}
+
+	// Sort keys for deterministic output
+	keys := make([]string, 0, len(data))
+	for k := range data {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	columns := make([]string, len(keys))
+	placeholders := make([]string, len(keys))
+	args := make([]interface{}, len(keys))
+	for i, k := range keys {
+		if !isValidIdentifier(k) {
+			return nil, fmt.Errorf("invalid column name: %s", k)
+		}
+		columns[i] = t.quoteIdentifier(k)
+		placeholders[i] = "?"
+		args[i] = data[k]
+	}
+
+	sqlStr := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
+		t.quoteIdentifier(tableName),
+		strings.Join(columns, ", "),
+		strings.Join(placeholders, ", "))
+
+	if t.Dialect.SupportsReturning() {
+		sqlStr += " RETURNING *"
+	}
+
+	return &TranspileResult{
+		SQL:  t.replacePlaceholders(sqlStr),
+		Args: args,
+	}, nil
+}
+
+// TranspileUpdate generates an UPDATE SQL statement from a table name, patch data, and where clause
+func (t *Transpiler) TranspileUpdate(tableName string, patch map[string]interface{}, where map[string]interface{}) (*TranspileResult, error) {
+	if len(patch) == 0 {
+		return nil, fmt.Errorf("update patch cannot be empty")
+	}
+	if !isValidIdentifier(tableName) {
+		return nil, fmt.Errorf("invalid table name: %s", tableName)
+	}
+
+	// Sort keys for deterministic output
+	keys := make([]string, 0, len(patch))
+	for k := range patch {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	setParts := make([]string, len(keys))
+	args := make([]interface{}, len(keys))
+	for i, k := range keys {
+		if !isValidIdentifier(k) {
+			return nil, fmt.Errorf("invalid column name: %s", k)
+		}
+		setParts[i] = fmt.Sprintf("%s = ?", t.quoteIdentifier(k))
+		args[i] = patch[k]
+	}
+
+	sqlStr := fmt.Sprintf("UPDATE %s SET %s", t.quoteIdentifier(tableName), strings.Join(setParts, ", "))
+
+	if where != nil && len(where) > 0 {
+		conds, whereArgs, err := t.processWhere(where, tableName)
+		if err != nil {
+			return nil, err
+		}
+		if len(conds) > 0 {
+			// Remove table prefix from conditions for simple UPDATE (no alias)
+			simpleConds := make([]string, len(conds))
+			for i, c := range conds {
+				simpleConds[i] = strings.Replace(c, t.quoteIdentifier(tableName)+".", "", 1)
+			}
+			sqlStr += " WHERE " + strings.Join(simpleConds, " AND ")
+			args = append(args, whereArgs...)
+		}
+	}
+
+	if t.Dialect.SupportsReturning() {
+		sqlStr += " RETURNING *"
+	}
+
+	return &TranspileResult{
+		SQL:  t.replacePlaceholders(sqlStr),
+		Args: args,
+	}, nil
+}
+
+// TranspileDelete generates a DELETE SQL statement from a table name and where clause
+func (t *Transpiler) TranspileDelete(tableName string, where map[string]interface{}) (*TranspileResult, error) {
+	if !isValidIdentifier(tableName) {
+		return nil, fmt.Errorf("invalid table name: %s", tableName)
+	}
+
+	sqlStr := fmt.Sprintf("DELETE FROM %s", t.quoteIdentifier(tableName))
+
+	if where != nil && len(where) > 0 {
+		conds, args, err := t.processWhere(where, tableName)
+		if err != nil {
+			return nil, err
+		}
+		if len(conds) > 0 {
+			simpleConds := make([]string, len(conds))
+			for i, c := range conds {
+				simpleConds[i] = strings.Replace(c, t.quoteIdentifier(tableName)+".", "", 1)
+			}
+			sqlStr += " WHERE " + strings.Join(simpleConds, " AND ")
+			return &TranspileResult{
+				SQL:  t.replacePlaceholders(sqlStr),
+				Args: args,
+			}, nil
+		}
+	}
+
+	return &TranspileResult{
+		SQL:  t.replacePlaceholders(sqlStr),
+		Args: nil,
+	}, nil
 }

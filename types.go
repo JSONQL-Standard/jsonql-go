@@ -35,3 +35,24 @@ type JSONQLQuery struct {
 	GroupBy   []string               `json:"groupBy,omitempty"`
 	Include   map[string]interface{} `json:"include,omitempty"`
 }
+
+// JSONQLMutation represents a mutation operation (create, update, delete)
+type JSONQLMutation struct {
+	Op    string                 `json:"op"`
+	Data  map[string]interface{} `json:"data,omitempty"`
+	Patch map[string]interface{} `json:"patch,omitempty"`
+	Where map[string]interface{} `json:"where,omitempty"`
+}
+
+// ValidationError represents a single validation error with a code and message
+type ValidationError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Path    string `json:"path,omitempty"`
+}
+
+// ValidationResult contains the outcome of validation
+type ValidationResult struct {
+	Valid  bool              `json:"valid"`
+	Errors []ValidationError `json:"errors,omitempty"`
+}

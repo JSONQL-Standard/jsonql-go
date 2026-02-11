@@ -7,14 +7,31 @@ import (
 	"regexp"
 )
 
-// Parser parses JSONQL queries
-type Parser struct {
-	// Configuration options
+// ParserOptions configures security and validation limits for the parser
+type ParserOptions struct {
+	// MaxNestingDepth limits the depth of nested includes (0 = unlimited)
+	MaxNestingDepth int
+	// MaxLimit caps the maximum value of the limit field (0 = unlimited)
+	MaxLimit int
+	// AllowedFields restricts which field names can appear in queries (nil = all allowed)
+	AllowedFields []string
+	// AllowedIncludes restricts which relation names can be included (nil = all allowed)
+	AllowedIncludes []string
 }
 
-// NewParser creates a new JSONQL parser
+// Parser parses JSONQL queries
+type Parser struct {
+	Options *ParserOptions
+}
+
+// NewParser creates a new JSONQL parser with default options
 func NewParser() *Parser {
 	return &Parser{}
+}
+
+// NewParserWithOptions creates a new JSONQL parser with the given options
+func NewParserWithOptions(opts *ParserOptions) *Parser {
+	return &Parser{Options: opts}
 }
 
 // Parse parses and validates a JSONQL query from a raw map
@@ -64,11 +81,53 @@ func (p *Parser) ParseJSON(input []byte) (*JSONQLQuery, error) {
 	return &query, nil
 }
 
-// Validate checks if the query is valid
+// Validate checks if the query is valid, applying parser options
 func (p *Parser) Validate(query *JSONQLQuery) error {
 	// Check version
 	if query.Version != "" && query.Version != "1.0" && query.Version != "1.1" {
 		return errors.New("Query version must be \"1.0\" or \"1.1\"")
+	}
+
+	// Apply parser options
+	if p.Options != nil {
+		// MaxLimit enforcement
+		if p.Options.MaxLimit > 0 && query.Limit != nil && *query.Limit > p.Options.MaxLimit {
+			return fmt.Errorf("limit %d exceeds maximum allowed limit of %d", *query.Limit, p.Options.MaxLimit)
+		}
+
+		// MaxNestingDepth enforcement
+		if p.Options.MaxNestingDepth > 0 && len(query.Include) > 0 {
+			depth := calculateIncludeDepth(query.Include)
+			if depth > p.Options.MaxNestingDepth {
+				return fmt.Errorf("include nesting depth %d exceeds maximum allowed depth of %d", depth, p.Options.MaxNestingDepth)
+			}
+		}
+
+		// AllowedFields enforcement
+		if len(p.Options.AllowedFields) > 0 {
+			allowed := make(map[string]bool, len(p.Options.AllowedFields))
+			for _, f := range p.Options.AllowedFields {
+				allowed[f] = true
+			}
+			for _, f := range query.Fields {
+				if !allowed[f] {
+					return fmt.Errorf("field '%s' is not in the allowed fields list", f)
+				}
+			}
+		}
+
+		// AllowedIncludes enforcement
+		if len(p.Options.AllowedIncludes) > 0 {
+			allowed := make(map[string]bool, len(p.Options.AllowedIncludes))
+			for _, r := range p.Options.AllowedIncludes {
+				allowed[r] = true
+			}
+			for rel := range query.Include {
+				if !allowed[rel] {
+					return fmt.Errorf("include '%s' is not in the allowed includes list", rel)
+				}
+			}
+		}
 	}
 
 	// Validate Fields
@@ -109,6 +168,22 @@ func (p *Parser) Validate(query *JSONQLQuery) error {
 	}
 
 	return nil
+}
+
+// calculateIncludeDepth computes the maximum depth of nested includes
+func calculateIncludeDepth(include map[string]interface{}) int {
+	maxDepth := 1
+	for _, val := range include {
+		if subMap, ok := val.(map[string]interface{}); ok {
+			if nestedInclude, ok := subMap["include"].(map[string]interface{}); ok {
+				depth := 1 + calculateIncludeDepth(nestedInclude)
+				if depth > maxDepth {
+					maxDepth = depth
+				}
+			}
+		}
+	}
+	return maxDepth
 }
 
 var identifierRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)

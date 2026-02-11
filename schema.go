@@ -183,6 +183,191 @@ func (v *Validator) Validate(query *JSONQLQuery) error {
 	return nil
 }
 
+// ValidateAll performs comprehensive validation and returns structured errors instead of a single error.
+// This is the recommended validation method for providing detailed feedback to API consumers.
+func (v *Validator) ValidateAll(query *JSONQLQuery) *ValidationResult {
+	result := &ValidationResult{Valid: true}
+
+	// Check global settings
+	if v.schema.Settings != nil {
+		if !v.schema.Settings.AllowAggregate && (len(query.Aggregate) > 0 || len(query.GroupBy) > 0) {
+			result.Valid = false
+			result.Errors = append(result.Errors, ValidationError{
+				Code:    "AGGREGATION_DISABLED",
+				Message: "aggregations are disabled in this schema",
+			})
+		}
+		if v.schema.Settings.MaxDepth > 0 {
+			depth := v.calculateDepth(query)
+			if depth > v.schema.Settings.MaxDepth {
+				result.Valid = false
+				result.Errors = append(result.Errors, ValidationError{
+					Code:    "MAX_DEPTH_EXCEEDED",
+					Message: fmt.Sprintf("query depth %d exceeds maximum allowed depth of %d", depth, v.schema.Settings.MaxDepth),
+				})
+			}
+		}
+	}
+
+	table, ok := v.schema.Tables[v.table]
+	if !ok {
+		result.Valid = false
+		result.Errors = append(result.Errors, ValidationError{
+			Code:    "TABLE_NOT_FOUND",
+			Message: fmt.Sprintf("table '%s' not found in schema", v.table),
+		})
+		return result
+	}
+
+	// Fields
+	for _, f := range query.Fields {
+		field, ok := table.Fields[f]
+		if !ok || (field.AllowSelect != nil && !*field.AllowSelect) {
+			result.Valid = false
+			result.Errors = append(result.Errors, ValidationError{
+				Code:    "FIELD_NOT_ALLOWED",
+				Message: fmt.Sprintf("field '%s' not allowed on table '%s'", f, v.table),
+				Path:    "fields",
+			})
+		}
+	}
+
+	// Where fields
+	for field := range query.Where {
+		if field == "or" || field == "and" || field == "not" {
+			continue
+		}
+		fieldObj, ok := table.Fields[field]
+		if !ok || (fieldObj.AllowFilter != nil && !*fieldObj.AllowFilter) {
+			result.Valid = false
+			result.Errors = append(result.Errors, ValidationError{
+				Code:    "FIELD_NOT_FILTERABLE",
+				Message: fmt.Sprintf("field '%s' not filterable on table '%s'", field, v.table),
+				Path:    "where",
+			})
+		}
+	}
+
+	// Sort fields
+	for _, s := range query.Sort {
+		field := s
+		if len(s) > 0 && s[0] == '-' {
+			field = s[1:]
+		}
+		fieldObj, ok := table.Fields[field]
+		if !ok || (fieldObj.AllowSort != nil && !*fieldObj.AllowSort) {
+			result.Valid = false
+			result.Errors = append(result.Errors, ValidationError{
+				Code:    "FIELD_NOT_SORTABLE",
+				Message: fmt.Sprintf("field '%s' not sortable on table '%s'", field, v.table),
+				Path:    "sort",
+			})
+		}
+	}
+
+	// Group By
+	for _, g := range query.GroupBy {
+		field, ok := table.Fields[g]
+		if !ok || (field.AllowGroup != nil && !*field.AllowGroup) {
+			result.Valid = false
+			result.Errors = append(result.Errors, ValidationError{
+				Code:    "FIELD_NOT_GROUPABLE",
+				Message: fmt.Sprintf("field '%s' not groupable on table '%s'", g, v.table),
+				Path:    "groupBy",
+			})
+		}
+	}
+
+	// Aggregates
+	for alias, aggDef := range query.Aggregate {
+		if aggMap, ok := aggDef.(map[string]interface{}); ok {
+			for funcName, fRaw := range aggMap {
+				fieldName, ok := fRaw.(string)
+				if !ok {
+					continue
+				}
+				if fieldName == "*" && funcName == "count" {
+					continue
+				}
+				field, ok := table.Fields[fieldName]
+				if !ok {
+					result.Valid = false
+					result.Errors = append(result.Errors, ValidationError{
+						Code:    "FIELD_NOT_FOUND",
+						Message: fmt.Sprintf("field '%s' not found on table '%s'", fieldName, v.table),
+						Path:    "aggregate." + alias,
+					})
+					continue
+				}
+				allowed := true
+				checked := false
+				switch funcName {
+				case "sum":
+					if field.AllowSum != nil {
+						allowed = *field.AllowSum
+						checked = true
+					}
+				case "avg":
+					if field.AllowAvg != nil {
+						allowed = *field.AllowAvg
+						checked = true
+					}
+				case "min":
+					if field.AllowMin != nil {
+						allowed = *field.AllowMin
+						checked = true
+					}
+				case "max":
+					if field.AllowMax != nil {
+						allowed = *field.AllowMax
+						checked = true
+					}
+				case "count":
+					if field.AllowCount != nil {
+						allowed = *field.AllowCount
+						checked = true
+					}
+				}
+				if !checked && field.AllowAggregate != nil {
+					allowed = *field.AllowAggregate
+				}
+				if !allowed {
+					result.Valid = false
+					result.Errors = append(result.Errors, ValidationError{
+						Code:    "AGGREGATION_NOT_ALLOWED",
+						Message: fmt.Sprintf("aggregation '%s' not allowed on field '%s'", funcName, fieldName),
+						Path:    "aggregate." + alias,
+					})
+				}
+			}
+		}
+	}
+
+	// Relations
+	for relName := range query.Include {
+		rel, ok := table.Relations[relName]
+		if !ok {
+			result.Valid = false
+			result.Errors = append(result.Errors, ValidationError{
+				Code:    "RELATION_NOT_FOUND",
+				Message: fmt.Sprintf("relation '%s' not found on table '%s'", relName, v.table),
+				Path:    "include",
+			})
+			continue
+		}
+		if rel.AllowInclude != nil && !*rel.AllowInclude {
+			result.Valid = false
+			result.Errors = append(result.Errors, ValidationError{
+				Code:    "RELATION_NOT_ALLOWED",
+				Message: fmt.Sprintf("relation '%s' not allowed to be included", relName),
+				Path:    "include",
+			})
+		}
+	}
+
+	return result
+}
+
 func (v *Validator) calculateDepth(query *JSONQLQuery) int {
 	if len(query.Include) == 0 {
 		return 0
