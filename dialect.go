@@ -35,6 +35,14 @@ func (MySQLDialect) Placeholder(int) string           { return "?" }
 func (MySQLDialect) QuoteIdentifier(id string) string { return fmt.Sprintf("`%s`", id) }
 func (MySQLDialect) SupportsReturning() bool          { return false }
 
+// MSSQLDialect generates SQL for Microsoft SQL Server
+type MSSQLDialect struct{}
+
+func (MSSQLDialect) Name() string                     { return "mssql" }
+func (MSSQLDialect) Placeholder(i int) string          { return fmt.Sprintf("@p%d", i+1) }
+func (MSSQLDialect) QuoteIdentifier(id string) string  { return fmt.Sprintf("[%s]", id) }
+func (MSSQLDialect) SupportsReturning() bool           { return false }
+
 // NewSQLDialect creates a dialect from a name string
 func NewSQLDialect(name string) SQLDialect {
 	switch name {
@@ -42,6 +50,8 @@ func NewSQLDialect(name string) SQLDialect {
 		return PostgresDialect{}
 	case "mysql":
 		return MySQLDialect{}
+	case "mssql":
+		return MSSQLDialect{}
 	default:
 		return SQLiteDialect{}
 	}

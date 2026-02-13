@@ -174,11 +174,30 @@ func (t *Transpiler) Transpile(query *JSONQLQuery, tableName string, schema *JSO
 	}
 
 	// 7. LIMIT / OFFSET
-	if query.Limit != nil && *query.Limit > 0 {
-		sqlStr += fmt.Sprintf(" LIMIT %d", *query.Limit)
-	}
-	if query.Offset != nil && *query.Offset > 0 {
-		sqlStr += fmt.Sprintf(" OFFSET %d", *query.Offset)
+	if t.Dialect.Name() == "mssql" {
+		if query.Limit != nil && *query.Limit > 0 {
+			// MSSQL requires ORDER BY for OFFSET/FETCH; add default if missing
+			if len(query.Sort) == 0 {
+				sqlStr += " ORDER BY (SELECT NULL)"
+			}
+			offset := 0
+			if query.Offset != nil && *query.Offset > 0 {
+				offset = *query.Offset
+			}
+			sqlStr += fmt.Sprintf(" OFFSET %d ROWS FETCH NEXT %d ROWS ONLY", offset, *query.Limit)
+		} else if query.Offset != nil && *query.Offset > 0 {
+			if len(query.Sort) == 0 {
+				sqlStr += " ORDER BY (SELECT NULL)"
+			}
+			sqlStr += fmt.Sprintf(" OFFSET %d ROWS", *query.Offset)
+		}
+	} else {
+		if query.Limit != nil && *query.Limit > 0 {
+			sqlStr += fmt.Sprintf(" LIMIT %d", *query.Limit)
+		}
+		if query.Offset != nil && *query.Offset > 0 {
+			sqlStr += fmt.Sprintf(" OFFSET %d", *query.Offset)
+		}
 	}
 
 	return &TranspileResult{

@@ -66,108 +66,114 @@ func (v *Validator) Validate(query *JSONQLQuery) error {
 		return fmt.Errorf("table '%s' not found in schema", v.table)
 	}
 
-	// Fields
-	for _, f := range query.Fields {
-		field, ok := table.Fields[f]
-		if !ok || (field.AllowSelect != nil && !*field.AllowSelect) {
-			return fmt.Errorf("field '%s' not allowed on table '%s'", f, v.table)
-		}
-	}
-
-	// Where fields (allowFilter)
-	for field := range query.Where {
-		if field == "or" {
-			continue
-		}
-		fieldObj, ok := table.Fields[field]
-		if !ok || (fieldObj.AllowFilter != nil && !*fieldObj.AllowFilter) {
-			return fmt.Errorf("field '%s' not filterable on table '%s'", field, v.table)
-		}
-	}
-
-	// Sort fields (allowSort)
-	for _, s := range query.Sort {
-		field := s
-		if len(s) > 0 && s[0] == '-' {
-			field = s[1:]
-		}
-		fieldObj, ok := table.Fields[field]
-		if !ok || (fieldObj.AllowSort != nil && !*fieldObj.AllowSort) {
-			return fmt.Errorf("field '%s' not sortable on table '%s'", field, v.table)
-		}
-	}
-
-	// Group By (allowGroup)
-	for _, g := range query.GroupBy {
-		field, ok := table.Fields[g]
-		if !ok || (field.AllowGroup != nil && !*field.AllowGroup) {
-			return fmt.Errorf("field '%s' not groupable on table '%s'", g, v.table)
-		}
-	}
-
-	// Aggregates
-	for _, aggDef := range query.Aggregate {
-		if aggMap, ok := aggDef.(map[string]interface{}); ok {
-			for funcName, fRaw := range aggMap {
-				fieldName, ok := fRaw.(string)
-				if !ok {
-					continue
-				}
-
-				if fieldName == "*" && funcName == "count" {
-					continue // COUNT(*) usually allowed if aggregation is allowed globally
-				}
-
-				field, ok := table.Fields[fieldName]
-				if !ok {
-					return fmt.Errorf("field '%s' not found on table '%s'", fieldName, v.table)
-				}
-
-				// Check specific function permission first
-				allowed := true
-				checked := false
-
-				switch funcName {
-				case "sum":
-					if field.AllowSum != nil {
-						allowed = *field.AllowSum
-						checked = true
-					}
-				case "avg":
-					if field.AllowAvg != nil {
-						allowed = *field.AllowAvg
-						checked = true
-					}
-				case "min":
-					if field.AllowMin != nil {
-						allowed = *field.AllowMin
-						checked = true
-					}
-				case "max":
-					if field.AllowMax != nil {
-						allowed = *field.AllowMax
-						checked = true
-					}
-				case "count":
-					if field.AllowCount != nil {
-						allowed = *field.AllowCount
-						checked = true
-					}
-				}
-
-				// If specific check was not performed (nil), fall back to AllowAggregate
-				if !checked {
-					if field.AllowAggregate != nil {
-						allowed = *field.AllowAggregate
-					}
-				}
-
-				if !allowed {
-					return fmt.Errorf("aggregation '%s' not allowed on field '%s'", funcName, fieldName)
-				}
+	// Fields — only validate when the schema defines fields for this table
+	if len(table.Fields) > 0 {
+		for _, f := range query.Fields {
+			field, ok := table.Fields[f]
+			if !ok || (field.AllowSelect != nil && !*field.AllowSelect) {
+				return fmt.Errorf("field '%s' not allowed on table '%s'", f, v.table)
 			}
 		}
 	}
+
+	// Where fields (allowFilter) — only validate when the schema defines fields
+	if len(table.Fields) > 0 {
+		for field := range query.Where {
+			if field == "or" {
+				continue
+			}
+			fieldObj, ok := table.Fields[field]
+			if !ok || (fieldObj.AllowFilter != nil && !*fieldObj.AllowFilter) {
+				return fmt.Errorf("field '%s' not filterable on table '%s'", field, v.table)
+			}
+		}
+	}
+
+	// Sort fields (allowSort) — only validate when schema defines fields
+	if len(table.Fields) > 0 {
+		for _, s := range query.Sort {
+			field := s
+			if len(s) > 0 && s[0] == '-' {
+				field = s[1:]
+			}
+			fieldObj, ok := table.Fields[field]
+			if !ok || (fieldObj.AllowSort != nil && !*fieldObj.AllowSort) {
+				return fmt.Errorf("field '%s' not sortable on table '%s'", field, v.table)
+			}
+		}
+
+		// Group By (allowGroup)
+		for _, g := range query.GroupBy {
+			field, ok := table.Fields[g]
+			if !ok || (field.AllowGroup != nil && !*field.AllowGroup) {
+				return fmt.Errorf("field '%s' not groupable on table '%s'", g, v.table)
+			}
+		}
+
+		// Aggregates
+		for _, aggDef := range query.Aggregate {
+			if aggMap, ok := aggDef.(map[string]interface{}); ok {
+				for funcName, fRaw := range aggMap {
+					fieldName, ok := fRaw.(string)
+					if !ok {
+						continue
+					}
+
+					if fieldName == "*" && funcName == "count" {
+						continue // COUNT(*) usually allowed if aggregation is allowed globally
+					}
+
+					field, ok := table.Fields[fieldName]
+					if !ok {
+						return fmt.Errorf("field '%s' not found on table '%s'", fieldName, v.table)
+					}
+
+					// Check specific function permission first
+					allowed := true
+					checked := false
+
+					switch funcName {
+					case "sum":
+						if field.AllowSum != nil {
+							allowed = *field.AllowSum
+							checked = true
+						}
+					case "avg":
+						if field.AllowAvg != nil {
+							allowed = *field.AllowAvg
+							checked = true
+						}
+					case "min":
+						if field.AllowMin != nil {
+							allowed = *field.AllowMin
+							checked = true
+						}
+					case "max":
+						if field.AllowMax != nil {
+							allowed = *field.AllowMax
+							checked = true
+						}
+					case "count":
+						if field.AllowCount != nil {
+							allowed = *field.AllowCount
+							checked = true
+						}
+					}
+
+					// If specific check was not performed (nil), fall back to AllowAggregate
+					if !checked {
+						if field.AllowAggregate != nil {
+							allowed = *field.AllowAggregate
+						}
+					}
+
+					if !allowed {
+						return fmt.Errorf("aggregation '%s' not allowed on field '%s'", funcName, fieldName)
+					}
+				}
+			}
+		}
+	} // end if len(table.Fields) > 0
 
 	// Relations (allowInclude)
 	for relName := range query.Include {
