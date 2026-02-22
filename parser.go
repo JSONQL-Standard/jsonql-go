@@ -133,10 +133,17 @@ func (p *Parser) Validate(query *JSONQLQuery) error {
 	// Validate Fields
 	if len(query.Fields) > 0 {
 		for _, f := range query.Fields {
+			if f == "*" {
+				continue
+			}
 			if !isValidIdentifier(f) {
 				return fmt.Errorf("Invalid field name: %s", f)
 			}
 		}
+	}
+
+	if query.Limit != nil && *query.Limit < 0 {
+		return errors.New("limit must be a non-negative number")
 	}
 
 	// Validate Sort

@@ -13,8 +13,9 @@ type JSONQLSettings struct {
 }
 
 type JSONQLTable struct {
-	Fields    map[string]*JSONQLField    `json:"fields"`
-	Relations map[string]*JSONQLRelation `json:"relations,omitempty"`
+	Fields     map[string]*JSONQLField    `json:"fields"`
+	Relations  map[string]*JSONQLRelation `json:"relations,omitempty"`
+	PrimaryKey string                     `json:"primaryKey,omitempty"`
 }
 
 type JSONQLField struct {

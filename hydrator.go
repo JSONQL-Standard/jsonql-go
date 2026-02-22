@@ -7,11 +7,21 @@ import (
 )
 
 // Hydrator converts SQL rows into JSON-friendly structures
-type Hydrator struct{}
+type Hydrator struct {
+	Logger Logger
+}
 
 // NewHydrator creates a new Hydrator
 func NewHydrator() *Hydrator {
-	return &Hydrator{}
+	return &Hydrator{Logger: NoOpLogger{}}
+}
+
+// NewHydratorWithLogger creates a new Hydrator with a logger
+func NewHydratorWithLogger(logger Logger) *Hydrator {
+	if logger == nil {
+		logger = NoOpLogger{}
+	}
+	return &Hydrator{Logger: logger}
 }
 
 // Hydrate converts sql.Rows into a slice of maps
@@ -105,43 +115,37 @@ func (h *Hydrator) Hydrate(rows *sql.Rows, schema *JSONQLSchema, rootTable strin
 		rawRows = append(rawRows, rowMap)
 	}
 
+	h.Logger.Debug("[JSONQL] Hydrator: scanned %d raw rows, %d columns", len(rawRows), len(cols))
+
 	if schema != nil && rootTable != "" {
-		return h.MergeRows(rawRows, schema, rootTable), nil
+		merged := h.MergeRows(rawRows, schema, rootTable)
+		h.Logger.Debug("[JSONQL] Hydrator: merged to %d results", len(merged))
+		return merged, nil
 	}
 
 	return rawRows, nil
 }
 
-// MergeRows groups rows by ID and merges relationships
+// MergeRows groups rows by primary key and merges relationships
 func (h *Hydrator) MergeRows(rows []map[string]interface{}, schema *JSONQLSchema, tableName string) []map[string]interface{} {
 	if len(rows) == 0 {
 		return []map[string]interface{}{}
 	}
 
-	// Group by ID
+	// Determine primary key from schema (default to "id")
+	pk := "id"
+	if tableDef, ok := schema.Tables[tableName]; ok && tableDef.PrimaryKey != "" {
+		pk = tableDef.PrimaryKey
+	}
+
+	// Group by primary key
 	groups := make(map[interface{}][]map[string]interface{})
 	var order []interface{} // To preserve order
 
 	for _, row := range rows {
-		// We assume 'id' is the PK. If missing, we can't merge, so treat as unique.
-		id, ok := row["id"]
+		id, ok := row[pk]
 		if !ok || id == nil {
-			// If no ID, we can't group. Just append to results?
-			// Or maybe this row IS the result (e.g. aggregate result without ID).
-			// If we are in a recursion, this might be a problem.
-			// Let's treat it as a unique group key.
-			// Use the row itself as key? No, map key must be comparable.
-			// Use index?
-			// For now, let's just skip grouping for rows without ID and return them as is?
-			// But we need to return a consistent slice.
-			// Let's use a pointer to the row as a unique ID substitute?
-			// Or just append to a "no-id" list.
-			// For simplicity in this app: if no ID, don't merge.
-			// But we must return []map.
-			// Let's just return the rows as is if we can't find ID in the first row?
-			// No, mixed content is possible.
-
-			// Fallback: use a unique counter
+			// Fallback: use a unique counter for rows without a PK
 			id = &row // Pointer as unique key
 		}
 
@@ -203,25 +207,29 @@ func (h *Hydrator) MergeRows(rows []map[string]interface{}, schema *JSONQLSchema
 					continue
 				}
 				var subRows []map[string]interface{}
+				// Determine PK for the target relation table
+				targetTable := relDef.Table
+				if targetTable == "" {
+					targetTable = relName
+				}
+				childPK := "id"
+				if targetTableDef, ok := schema.Tables[targetTable]; ok && targetTableDef.PrimaryKey != "" {
+					childPK = targetTableDef.PrimaryKey
+				}
 				for _, r := range groupRows {
 					if val, ok := r[relName]; ok {
 						if m, ok := val.(map[string]interface{}); ok {
-							if h.isValidRow(m) {
+							if h.isValidRow(m, childPK) {
 								subRows = append(subRows, m)
 							}
 						} else if s, ok := val.([]map[string]interface{}); ok {
 							for _, item := range s {
-								if h.isValidRow(item) {
+								if h.isValidRow(item, childPK) {
 									subRows = append(subRows, item)
 								}
 							}
 						}
 					}
-				}
-
-				targetTable := relDef.Table
-				if targetTable == "" {
-					targetTable = relName
 				}
 
 				mergedSub := h.MergeRows(subRows, schema, targetTable)
@@ -234,7 +242,7 @@ func (h *Hydrator) MergeRows(rows []map[string]interface{}, schema *JSONQLSchema
 						isAggregate := false
 						if len(mergedSub) == 1 {
 							row := mergedSub[0]
-							if _, hasID := row["id"]; !hasID {
+							if _, hasPK := row[childPK]; !hasPK {
 								if targetTableDef, ok := schema.Tables[targetTable]; ok {
 									allFieldsUnknown := true
 									for k := range row {
@@ -272,9 +280,9 @@ func (h *Hydrator) MergeRows(rows []map[string]interface{}, schema *JSONQLSchema
 	return results
 }
 
-// isValidRow checks if a row has valid data (non-nil ID or at least one non-nil field)
-func (h *Hydrator) isValidRow(row map[string]interface{}) bool {
-	if id, ok := row["id"]; ok {
+// isValidRow checks if a row has valid data (non-nil PK or at least one non-nil field)
+func (h *Hydrator) isValidRow(row map[string]interface{}, pk string) bool {
+	if id, ok := row[pk]; ok {
 		return id != nil
 	}
 	for _, v := range row {

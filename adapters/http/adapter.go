@@ -32,6 +32,8 @@ type AdapterOptions struct {
 	Dialect       string
 	Schema        *jsonql.JSONQLSchema
 	SchemaResolve SchemaResolver
+	Logger        jsonql.Logger
+	Debug         bool
 
 	BeforeQuery QueryHook
 	AfterQuery  QueryResultHook
@@ -59,6 +61,7 @@ type Adapter struct {
 	driver     jsonql.Driver
 	hydrator   *jsonql.Hydrator
 	options    AdapterOptions
+	logger     jsonql.Logger
 }
 
 func NewAdapter(opts AdapterOptions) (*Adapter, error) {
@@ -76,6 +79,16 @@ func NewAdapter(opts AdapterOptions) (*Adapter, error) {
 		}
 	}
 
+	// Resolve logger
+	var logger jsonql.Logger
+	if opts.Logger != nil {
+		logger = opts.Logger
+	} else if opts.Debug {
+		logger = jsonql.NewConsoleLogger(jsonql.LogLevelDebug)
+	} else {
+		logger = jsonql.NoOpLogger{}
+	}
+
 	parser := jsonql.NewParser()
 	if opts.ParserOptions != nil {
 		parser = jsonql.NewParserWithOptions(opts.ParserOptions)
@@ -83,10 +96,11 @@ func NewAdapter(opts AdapterOptions) (*Adapter, error) {
 
 	return &Adapter{
 		parser:     parser,
-		transpiler: jsonql.NewTranspiler(dialect),
+		transpiler: jsonql.NewTranspilerWithLogger(dialect, logger),
 		driver:     opts.Driver,
-		hydrator:   jsonql.NewHydrator(),
+		hydrator:   jsonql.NewHydratorWithLogger(logger),
 		options:    opts,
+		logger:     logger,
 	}, nil
 }
 
@@ -95,8 +109,10 @@ func (a *Adapter) Handle(raw map[string]interface{}, tableName string, r *http.R
 		return Response{}, &HandlerError{Status: http.StatusBadRequest, Message: "Invalid JSONQL Query"}
 	}
 	if op, ok := raw["op"].(string); ok {
+		a.logger.Debug("[JSONQL] %s mutation on %s", op, tableName)
 		return a.handleMutation(op, raw, tableName, r)
 	}
+	a.logger.Debug("[JSONQL] query on %s", tableName)
 	return a.handleQuery(raw, tableName, r)
 }
 

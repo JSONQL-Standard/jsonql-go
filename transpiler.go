@@ -9,11 +9,20 @@ import (
 // Transpiler converts JSONQL queries to SQL
 type Transpiler struct {
 	Dialect SQLDialect
+	Logger  Logger
 }
 
 // NewTranspiler creates a new SQL transpiler
 func NewTranspiler(name string) *Transpiler {
-	return &Transpiler{Dialect: NewSQLDialect(name)}
+	return &Transpiler{Dialect: NewSQLDialect(name), Logger: NoOpLogger{}}
+}
+
+// NewTranspilerWithLogger creates a new SQL transpiler with a logger
+func NewTranspilerWithLogger(name string, logger Logger) *Transpiler {
+	if logger == nil {
+		logger = NoOpLogger{}
+	}
+	return &Transpiler{Dialect: NewSQLDialect(name), Logger: logger}
 }
 
 // TranspileResult holds the generated SQL and arguments
@@ -36,6 +45,10 @@ func (t *Transpiler) Transpile(query *JSONQLQuery, tableName string, schema *JSO
 	// 1. SELECT clause (Main Table)
 	if len(query.Fields) > 0 {
 		for _, f := range query.Fields {
+			if f == "*" {
+				selectParts = append(selectParts, fmt.Sprintf("%s.*", t.quoteIdentifier(tableName)))
+				continue
+			}
 			if !isValidIdentifier(f) {
 				return nil, fmt.Errorf("Invalid field name: %s", f)
 			}
@@ -174,36 +187,35 @@ func (t *Transpiler) Transpile(query *JSONQLQuery, tableName string, schema *JSO
 	}
 
 	// 7. LIMIT / OFFSET
-	if t.Dialect.Name() == "mssql" {
-		if query.Limit != nil && *query.Limit > 0 {
-			// MSSQL requires ORDER BY for OFFSET/FETCH; add default if missing
-			if len(query.Sort) == 0 {
-				sqlStr += " ORDER BY (SELECT NULL)"
-			}
-			offset := 0
-			if query.Offset != nil && *query.Offset > 0 {
-				offset = *query.Offset
-			}
-			sqlStr += fmt.Sprintf(" OFFSET %d ROWS FETCH NEXT %d ROWS ONLY", offset, *query.Limit)
-		} else if query.Offset != nil && *query.Offset > 0 {
-			if len(query.Sort) == 0 {
-				sqlStr += " ORDER BY (SELECT NULL)"
-			}
-			sqlStr += fmt.Sprintf(" OFFSET %d ROWS", *query.Offset)
-		}
-	} else {
-		if query.Limit != nil && *query.Limit > 0 {
-			sqlStr += fmt.Sprintf(" LIMIT %d", *query.Limit)
+	{
+		limit := 0
+		offset := 0
+		hasLimit := query.Limit != nil
+		hasOffset := query.Offset != nil
+		if query.Limit != nil && *query.Limit >= 0 {
+			limit = *query.Limit
 		}
 		if query.Offset != nil && *query.Offset > 0 {
-			sqlStr += fmt.Sprintf(" OFFSET %d", *query.Offset)
+			offset = *query.Offset
+		}
+		if hasLimit || hasOffset {
+			// MSSQL requires ORDER BY for OFFSET/FETCH; add default if missing
+			if t.Dialect.Name() == "mssql" && len(query.Sort) == 0 {
+				sqlStr += " ORDER BY (SELECT NULL)"
+			}
+			if clause := t.Dialect.GetLimitOffset(limit, offset); clause != "" {
+				sqlStr += " " + clause
+			}
 		}
 	}
 
-	return &TranspileResult{
+	result := &TranspileResult{
 		SQL:  t.replacePlaceholders(sqlStr),
 		Args: args,
-	}, nil
+	}
+	t.Logger.Debug("[JSONQL] SQL: %s", result.SQL)
+	t.Logger.Debug("[JSONQL] Args: %v", result.Args)
+	return result, nil
 }
 
 func (t *Transpiler) processJoin(
@@ -439,18 +451,49 @@ func (t *Transpiler) processWhere(where map[string]interface{}, tableAlias strin
 	var conditions []string
 	var args []interface{}
 
+	resolveFieldRef := func(value interface{}) (string, bool, error) {
+		refMap, ok := value.(map[string]interface{})
+		if !ok {
+			return "", false, nil
+		}
+		rawField, ok := refMap["field"]
+		if !ok {
+			return "", false, nil
+		}
+		fieldName, ok := rawField.(string)
+		if !ok || fieldName == "" {
+			return "", false, fmt.Errorf("Invalid field reference")
+		}
+		parts := strings.Split(fieldName, ".")
+		if len(parts) == 1 {
+			if !isValidIdentifier(parts[0]) {
+				return "", false, fmt.Errorf("Invalid field reference: %s", fieldName)
+			}
+			return fmt.Sprintf("%s.%s", t.quoteIdentifier(tableAlias), t.quoteIdentifier(parts[0])), true, nil
+		}
+		if len(parts) == 2 {
+			if !isValidIdentifier(parts[0]) || !isValidIdentifier(parts[1]) {
+				return "", false, fmt.Errorf("Invalid field reference: %s", fieldName)
+			}
+			return "NULL", true, nil
+		}
+		return "", false, fmt.Errorf("Invalid field reference: %s", fieldName)
+	}
+
 	for field, cond := range where {
-		if field == "or" {
+		// Handle "or" logical operator — recursively process each sub-where
+		if field == "or" || field == "OR" {
 			if orList, ok := cond.([]interface{}); ok {
 				var orConditions []string
 				for _, item := range orList {
 					if itemMap, ok := item.(map[string]interface{}); ok {
-						for k, v := range itemMap {
-							if !isValidIdentifier(k) {
-								return nil, nil, fmt.Errorf("Invalid field name in OR clause: %s", k)
-							}
-							orConditions = append(orConditions, fmt.Sprintf("%s.%s = ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(k)))
-							args = append(args, v)
+						subConds, subArgs, err := t.processWhere(itemMap, tableAlias)
+						if err != nil {
+							return nil, nil, err
+						}
+						if len(subConds) > 0 {
+							orConditions = append(orConditions, "("+strings.Join(subConds, " AND ")+")")
+							args = append(args, subArgs...)
 						}
 					}
 				}
@@ -461,20 +504,72 @@ func (t *Transpiler) processWhere(where map[string]interface{}, tableAlias strin
 			continue
 		}
 
+		// Handle "and" logical operator — recursively process each sub-where
+		if field == "and" || field == "AND" {
+			if andList, ok := cond.([]interface{}); ok {
+				for _, item := range andList {
+					if itemMap, ok := item.(map[string]interface{}); ok {
+						subConds, subArgs, err := t.processWhere(itemMap, tableAlias)
+						if err != nil {
+							return nil, nil, err
+						}
+						if len(subConds) > 0 {
+							conditions = append(conditions, "("+strings.Join(subConds, " AND ")+")")
+							args = append(args, subArgs...)
+						}
+					}
+				}
+			}
+			continue
+		}
+
+		// Handle "not" logical operator — recursively process the sub-where and negate
+		if field == "not" || field == "NOT" {
+			if notMap, ok := cond.(map[string]interface{}); ok {
+				subConds, subArgs, err := t.processWhere(notMap, tableAlias)
+				if err != nil {
+					return nil, nil, err
+				}
+				if len(subConds) > 0 {
+					conditions = append(conditions, "NOT ("+strings.Join(subConds, " AND ")+")")
+					args = append(args, subArgs...)
+				}
+			}
+			continue
+		}
+
 		if !isValidIdentifier(field) {
 			return nil, nil, fmt.Errorf("Invalid field name in where clause: %s", field)
 		}
 
 		if valMap, ok := cond.(map[string]interface{}); ok {
+			handled := false
 			if v, ok := valMap["eq"]; ok {
+				handled = true
+				if rhs, isRef, err := resolveFieldRef(v); err != nil {
+					return nil, nil, err
+				} else if isRef {
+					conditions = append(conditions, fmt.Sprintf("%s.%s = %s", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field), rhs))
+					goto eqDone
+				}
 				if v == nil {
 					conditions = append(conditions, fmt.Sprintf("%s.%s IS NULL", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
 				} else {
 					conditions = append(conditions, fmt.Sprintf("%s.%s = ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
 					args = append(args, v)
 				}
+			eqDone:
 			}
 			if v, ok := valMap["neq"]; ok {
+				handled = true
+				if v == nil {
+					conditions = append(conditions, fmt.Sprintf("%s.%s IS NOT NULL", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
+				} else {
+					conditions = append(conditions, fmt.Sprintf("%s.%s != ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
+					args = append(args, v)
+				}
+			} else if v, ok := valMap["ne"]; ok {
+				handled = true
 				if v == nil {
 					conditions = append(conditions, fmt.Sprintf("%s.%s IS NOT NULL", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
 				} else {
@@ -483,26 +578,56 @@ func (t *Transpiler) processWhere(where map[string]interface{}, tableAlias strin
 				}
 			}
 			if v, ok := valMap["gt"]; ok {
-				conditions = append(conditions, fmt.Sprintf("%s.%s > ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
-				args = append(args, v)
+				handled = true
+				if rhs, isRef, err := resolveFieldRef(v); err != nil {
+					return nil, nil, err
+				} else if isRef {
+					conditions = append(conditions, fmt.Sprintf("%s.%s > %s", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field), rhs))
+				} else {
+					conditions = append(conditions, fmt.Sprintf("%s.%s > ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
+					args = append(args, v)
+				}
 			}
 			if v, ok := valMap["gte"]; ok {
-				conditions = append(conditions, fmt.Sprintf("%s.%s >= ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
-				args = append(args, v)
+				handled = true
+				if rhs, isRef, err := resolveFieldRef(v); err != nil {
+					return nil, nil, err
+				} else if isRef {
+					conditions = append(conditions, fmt.Sprintf("%s.%s >= %s", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field), rhs))
+				} else {
+					conditions = append(conditions, fmt.Sprintf("%s.%s >= ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
+					args = append(args, v)
+				}
 			}
 			if v, ok := valMap["lt"]; ok {
-				conditions = append(conditions, fmt.Sprintf("%s.%s < ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
-				args = append(args, v)
+				handled = true
+				if rhs, isRef, err := resolveFieldRef(v); err != nil {
+					return nil, nil, err
+				} else if isRef {
+					conditions = append(conditions, fmt.Sprintf("%s.%s < %s", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field), rhs))
+				} else {
+					conditions = append(conditions, fmt.Sprintf("%s.%s < ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
+					args = append(args, v)
+				}
 			}
 			if v, ok := valMap["lte"]; ok {
-				conditions = append(conditions, fmt.Sprintf("%s.%s <= ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
-				args = append(args, v)
+				handled = true
+				if rhs, isRef, err := resolveFieldRef(v); err != nil {
+					return nil, nil, err
+				} else if isRef {
+					conditions = append(conditions, fmt.Sprintf("%s.%s <= %s", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field), rhs))
+				} else {
+					conditions = append(conditions, fmt.Sprintf("%s.%s <= ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
+					args = append(args, v)
+				}
 			}
 			if v, ok := valMap["like"]; ok {
+				handled = true
 				conditions = append(conditions, fmt.Sprintf("%s.%s LIKE ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
 				args = append(args, v)
 			}
 			if v, ok := valMap["in"]; ok {
+				handled = true
 				if slice, ok := v.([]interface{}); ok && len(slice) > 0 {
 					placeholders := make([]string, len(slice))
 					for i := range slice {
@@ -510,6 +635,37 @@ func (t *Transpiler) processWhere(where map[string]interface{}, tableAlias strin
 						args = append(args, slice[i])
 					}
 					conditions = append(conditions, fmt.Sprintf("%s.%s IN (%s)", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field), strings.Join(placeholders, ", ")))
+				}
+			}
+			if v, ok := valMap["nin"]; ok {
+				handled = true
+				if slice, ok := v.([]interface{}); ok && len(slice) > 0 {
+					placeholders := make([]string, len(slice))
+					for i := range slice {
+						placeholders[i] = "?"
+						args = append(args, slice[i])
+					}
+					conditions = append(conditions, fmt.Sprintf("%s.%s NOT IN (%s)", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field), strings.Join(placeholders, ", ")))
+				}
+			}
+			if v, ok := valMap["contains"]; ok {
+				handled = true
+				conditions = append(conditions, fmt.Sprintf("%s.%s LIKE ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
+				args = append(args, fmt.Sprintf("%%%v%%", v))
+			}
+			if v, ok := valMap["starts"]; ok {
+				handled = true
+				conditions = append(conditions, fmt.Sprintf("%s.%s LIKE ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
+				args = append(args, fmt.Sprintf("%v%%", v))
+			}
+			if v, ok := valMap["ends"]; ok {
+				handled = true
+				conditions = append(conditions, fmt.Sprintf("%s.%s LIKE ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
+				args = append(args, fmt.Sprintf("%%%v", v))
+			}
+			if !handled && len(valMap) > 0 {
+				for op := range valMap {
+					return nil, nil, fmt.Errorf("Unknown operator \"%s\" for field \"%s\"", op, field)
 				}
 			}
 		} else {

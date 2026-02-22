@@ -19,3 +19,16 @@ type Driver interface {
 	// Dialect returns the SQL dialect name (e.g., "sqlite", "postgres", "mysql")
 	Dialect() string
 }
+
+// MongoDriver is the interface for MongoDB operations.
+// Unlike the SQL Driver, it operates on MongoResult descriptors
+// rather than raw SQL strings.
+type MongoDriver interface {
+	// Execute dispatches a MongoResult to the appropriate MongoDB operation
+	// (find, aggregate, insertOne, updateMany, deleteMany) and returns
+	// the result documents.
+	Execute(ctx context.Context, result *MongoResult) (interface{}, error)
+
+	// Close disconnects from the database.
+	Close() error
+}
