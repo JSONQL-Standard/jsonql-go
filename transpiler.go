@@ -107,7 +107,7 @@ func (t *Transpiler) Transpile(query *JSONQLQuery, tableName string, schema *JSO
 		}
 
 		// Start recursion with root table info
-		err := t.processJoin(query.Include, tableName, tableName, "", schema, &selectParts, &joinParts, &whereConditions, &args)
+		err := t.processJoin(map[string]interface{}(query.Include), tableName, tableName, "", schema, &selectParts, &joinParts, &whereConditions, &args)
 		if err != nil {
 			return nil, err
 		}
@@ -314,6 +314,23 @@ func (t *Transpiler) processJoin(
 					alias := fmt.Sprintf("%s__%s", currentHydratorPath, fieldName)
 					*selectParts = append(*selectParts, fmt.Sprintf("%s.%s AS %s", t.quoteIdentifier(currentTableAlias), t.quoteIdentifier(fieldName), t.quoteIdentifier(alias)))
 				}
+			}
+		} else {
+			// No explicit fields — select all columns from the target table schema
+			targetDef, found := schema.Tables[targetTable]
+			if found && len(targetDef.Fields) > 0 {
+				// Sort field names for deterministic output
+				fieldNames := make([]string, 0, len(targetDef.Fields))
+				for fname := range targetDef.Fields {
+					fieldNames = append(fieldNames, fname)
+				}
+				sort.Strings(fieldNames)
+				for _, fname := range fieldNames {
+					alias := fmt.Sprintf("%s__%s", currentHydratorPath, fname)
+					*selectParts = append(*selectParts, fmt.Sprintf("%s.%s AS %s", t.quoteIdentifier(currentTableAlias), t.quoteIdentifier(fname), t.quoteIdentifier(alias)))
+				}
+			} else {
+				*selectParts = append(*selectParts, fmt.Sprintf("%s.*", t.quoteIdentifier(currentTableAlias)))
 			}
 		}
 

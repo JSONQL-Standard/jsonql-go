@@ -396,7 +396,7 @@ func (v *Validator) calculateDepth(query *JSONQLQuery) int {
 				if nestedInclude, hasInclude := subQueryMap["include"]; hasInclude {
 					if nestedMap, ok := nestedInclude.(map[string]interface{}); ok {
 						// Create a dummy query to recurse
-						dummy := &JSONQLQuery{Include: nestedMap}
+						dummy := &JSONQLQuery{Include: IncludeMap(nestedMap)}
 						d := v.calculateDepth(dummy)
 						if d > maxChildDepth {
 							maxChildDepth = d

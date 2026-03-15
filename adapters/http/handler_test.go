@@ -44,8 +44,8 @@ func TestHandler(t *testing.T) {
 	reqBody := map[string]interface{}{
 		"users": map[string]interface{}{
 			"fields": []string{"name", "email"},
-			"filter": map[string]interface{}{
-				"name": "Alice",
+			"where": map[string]interface{}{
+				"name": map[string]interface{}{"eq": "Alice"},
 			},
 		},
 	}

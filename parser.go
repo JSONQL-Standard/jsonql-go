@@ -36,10 +36,43 @@ func NewParserWithOptions(opts *ParserOptions) *Parser {
 
 // Parse parses and validates a JSONQL query from a raw map
 func (p *Parser) Parse(input map[string]interface{}, schema *JSONQLSchema, table string) (*JSONQLQuery, error) {
+	// Validate for unknown top-level keys
+	allowedKeys := map[string]bool{
+		"version": true, "from": true, "where": true, "sort": true,
+		"limit": true, "skip": true, "offset": true, "fields": true,
+		"include": true, "groupBy": true, "distinct": true, "aggregate": true,
+		"op": true, "data": true, "patch": true,
+	}
+	for key := range input {
+		if !allowedKeys[key] {
+			return nil, fmt.Errorf("Unknown property \"%s\" in query", key)
+		}
+	}
+
 	// Pre-validation...
 	if fields, ok := input["fields"]; ok {
 		if fieldsArr, ok := fields.([]interface{}); ok && len(fieldsArr) == 0 {
 			return nil, errors.New("Fields array cannot be empty")
+		}
+	}
+
+	// Normalise skip → offset
+	if skip, ok := input["skip"]; ok {
+		if _, hasOffset := input["offset"]; !hasOffset {
+			input["offset"] = skip
+		}
+		delete(input, "skip")
+	}
+
+	// Validate negative limit/offset before marshaling
+	if limit, ok := input["limit"]; ok {
+		if l, ok := limit.(float64); ok && l < 0 {
+			return nil, errors.New("limit must be a non-negative number")
+		}
+	}
+	if offset, ok := input["offset"]; ok {
+		if o, ok := offset.(float64); ok && o < 0 {
+			return nil, errors.New("skip must be a non-negative number")
 		}
 	}
 
@@ -97,7 +130,7 @@ func (p *Parser) Validate(query *JSONQLQuery) error {
 
 		// MaxNestingDepth enforcement
 		if p.Options.MaxNestingDepth > 0 && len(query.Include) > 0 {
-			depth := calculateIncludeDepth(query.Include)
+			depth := calculateIncludeDepth(map[string]interface{}(query.Include))
 			if depth > p.Options.MaxNestingDepth {
 				return fmt.Errorf("include nesting depth %d exceeds maximum allowed depth of %d", depth, p.Options.MaxNestingDepth)
 			}

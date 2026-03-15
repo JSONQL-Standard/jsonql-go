@@ -22,6 +22,30 @@ func (s *StringOrArray) UnmarshalJSON(data []byte) error {
 	return errors.New("field must be a string or array of strings")
 }
 
+// IncludeMap handles include that can be an array of strings or an object.
+// Array format ["posts", "comments"] is normalised to {"posts": {}, "comments": {}}.
+type IncludeMap map[string]interface{}
+
+func (m *IncludeMap) UnmarshalJSON(data []byte) error {
+	// Try array of strings first
+	var arr []string
+	if err := json.Unmarshal(data, &arr); err == nil {
+		result := make(IncludeMap, len(arr))
+		for _, rel := range arr {
+			result[rel] = map[string]interface{}{}
+		}
+		*m = result
+		return nil
+	}
+	// Fall back to object
+	var obj map[string]interface{}
+	if err := json.Unmarshal(data, &obj); err == nil {
+		*m = IncludeMap(obj)
+		return nil
+	}
+	return errors.New("include must be an array of strings or an object")
+}
+
 // JSONQLQuery represents the structure of a JSONQL query
 type JSONQLQuery struct {
 	Version   string                 `json:"version,omitempty"`
@@ -33,7 +57,7 @@ type JSONQLQuery struct {
 	Offset    *int                   `json:"offset,omitempty"`
 	Aggregate map[string]interface{} `json:"aggregate,omitempty"`
 	GroupBy   []string               `json:"groupBy,omitempty"`
-	Include   map[string]interface{} `json:"include,omitempty"`
+	Include   IncludeMap             `json:"include,omitempty"`
 	Distinct  *DistinctOption        `json:"distinct,omitempty"`
 }
 
