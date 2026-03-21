@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/jsonql-standard/jsonql-go"
@@ -124,13 +125,13 @@ func (a *Adapter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	method := strings.ToUpper(r.Method)
 	if method != http.MethodPost && method != http.MethodGet &&
 		method != http.MethodPatch && method != http.MethodDelete {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]interface{}{"error": "Method not allowed"})
+		WriteJSON(w, http.StatusMethodNotAllowed, map[string]interface{}{"error": "Method not allowed"})
 		return
 	}
 
 	tableName := strings.Trim(r.URL.Path, "/")
 	if tableName == "" || tableName == "favicon.ico" {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "Table name required in URL"})
+		WriteJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "Table name required in URL"})
 		return
 	}
 
@@ -139,13 +140,13 @@ func (a *Adapter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if method == http.MethodPost || method == http.MethodPatch || method == http.MethodDelete {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "Failed to read body"})
+			WriteJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "Failed to read body"})
 			return
 		}
 		defer r.Body.Close()
 		if len(body) > 0 {
 			if err := json.Unmarshal(body, &queryBody); err != nil {
-				writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "Invalid JSON"})
+				WriteJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "Invalid JSON"})
 				return
 			}
 		} else {
@@ -155,7 +156,7 @@ func (a *Adapter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// GET: parse from ?q= or build from query params
 		if q := r.URL.Query().Get("q"); q != "" {
 			if err := json.Unmarshal([]byte(q), &queryBody); err != nil {
-				writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "Invalid JSON in q parameter"})
+				WriteJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "Invalid JSON in q parameter"})
 				return
 			}
 		} else {
@@ -172,11 +173,11 @@ func (a *Adapter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	resp, err := a.Handle(queryBody, tableName, r)
 	if err != nil {
 		herr := WrapError(err)
-		writeJSON(w, herr.Status, map[string]interface{}{"error": herr.Message})
+		WriteJSON(w, herr.Status, map[string]interface{}{"error": herr.Message})
 		return
 	}
 
-	writeJSON(w, resp.Status, map[string]interface{}{"data": resp.Data})
+	WriteJSON(w, resp.Status, map[string]interface{}{"data": resp.Data})
 }
 
 // Handler returns the adapter as an http.Handler (convenience alias).
@@ -184,10 +185,75 @@ func (a *Adapter) Handler() http.Handler {
 	return a
 }
 
-func writeJSON(w http.ResponseWriter, status int, data interface{}) {
+// WriteJSON writes a JSON response with the given status code.
+func WriteJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(data)
+}
+
+// WriteError writes a JSON error response: {"error": message}.
+func WriteError(w http.ResponseWriter, message string, status int) {
+	WriteJSON(w, status, map[string]interface{}{"error": message})
+}
+
+// GetIDFromQuery extracts the "id" query parameter from a request.
+// Returns the parsed value (int if numeric, string otherwise) and whether it was present.
+func GetIDFromQuery(r *http.Request) (interface{}, bool) {
+	val := r.URL.Query().Get("id")
+	if val == "" {
+		return nil, false
+	}
+	if parsed, err := strconv.Atoi(val); err == nil {
+		return parsed, true
+	}
+	return val, true
+}
+
+// BuildRESTMutation converts a REST-style HTTP request into a JSONQL mutation.
+//
+// Mapping:
+//   - POST  with {"data": {...}}        → {"op": "create", "data": {...}}
+//   - PATCH with {"data": {...}} + ?id=X → {"op": "update", "where": {"id": X}, "patch": {...}}
+//   - DELETE with ?id=X                  → {"op": "delete", "where": {"id": X}}
+//
+// If the body already has an "op" field, or the method is GET, the body is returned unchanged.
+func BuildRESTMutation(r *http.Request, method string, body map[string]interface{}) map[string]interface{} {
+	if body == nil {
+		body = map[string]interface{}{}
+	}
+	method = strings.ToUpper(method)
+	if method == http.MethodPost {
+		if data, ok := body["data"]; ok {
+			return map[string]interface{}{"op": "create", "data": data}
+		}
+	}
+	if method == http.MethodPatch || method == http.MethodPut {
+		id, ok := GetIDFromQuery(r)
+		if !ok {
+			return body
+		}
+		data, ok := body["data"].(map[string]interface{})
+		if !ok {
+			return body
+		}
+		return map[string]interface{}{
+			"op":    "update",
+			"where": map[string]interface{}{"id": id},
+			"patch": data,
+		}
+	}
+	if method == http.MethodDelete {
+		id, ok := GetIDFromQuery(r)
+		if !ok {
+			return body
+		}
+		return map[string]interface{}{
+			"op":    "delete",
+			"where": map[string]interface{}{"id": id},
+		}
+	}
+	return body
 }
 
 func (a *Adapter) Handle(raw map[string]interface{}, tableName string, r *http.Request) (Response, error) {

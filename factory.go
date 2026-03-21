@@ -62,16 +62,16 @@ func createGenericDriver(sqlDriverName, dialect, dsn string) (Driver, error) {
 func CreateDriver(dialect string) (Driver, error) {
 	switch dialect {
 	case "postgres":
-		dsn := envOr("DB_DSN", "postgresql://jsonql:password@localhost:5432/jsonql_test?sslmode=disable")
+		dsn := EnvOr("DB_DSN", "postgresql://jsonql:password@localhost:5432/jsonql_test?sslmode=disable")
 		return createGenericDriver("postgres", "postgres", dsn)
 	case "mysql":
-		dsn := envOr("DB_DSN", "jsonql:password@tcp(localhost:3306)/jsonql_test")
+		dsn := EnvOr("DB_DSN", "jsonql:password@tcp(localhost:3306)/jsonql_test")
 		return createGenericDriver("mysql", "mysql", dsn)
 	case "sqlite":
-		filename := envOr("DB_FILENAME", ":memory:")
+		filename := EnvOr("DB_FILENAME", ":memory:")
 		return createGenericDriver("sqlite", "sqlite", filename)
 	case "mssql":
-		dsn := envOr("DB_DSN", "sqlserver://sa:Password@localhost:1433?database=jsonql_test")
+		dsn := EnvOr("DB_DSN", "sqlserver://sa:Password@localhost:1433?database=jsonql_test")
 		return createGenericDriver("sqlserver", "mssql", dsn)
 	default:
 		return nil, fmt.Errorf("unsupported dialect: %s", dialect)
@@ -129,7 +129,9 @@ func MustLoadSchema(path string) *JSONQLSchema {
 	return schema
 }
 
-func envOr(key, fallback string) string {
+// EnvOr returns the value of the environment variable named by key,
+// or fallback if the variable is empty or unset.
+func EnvOr(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
 	}
