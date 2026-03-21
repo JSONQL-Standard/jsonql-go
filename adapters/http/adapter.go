@@ -3,7 +3,9 @@ package jsonqlhttp
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -102,6 +104,90 @@ func NewAdapter(opts AdapterOptions) (*Adapter, error) {
 		options:    opts,
 		logger:     logger,
 	}, nil
+}
+
+// ServeHTTP implements http.Handler, providing a zero-config request handler.
+//
+// It handles the full request lifecycle:
+//   - Extracts table name from URL path
+//   - Parses request body (POST/PATCH/DELETE) or query string (GET)
+//   - Infers mutation op from HTTP method (POST→create, PATCH→update, DELETE→delete)
+//   - Calls Handle() and serializes the response as JSON
+//
+// Usage:
+//
+//	adapter, _ := jsonqlhttp.NewAdapter(opts)
+//	http.Handle("/", adapter)
+//	// or
+//	mux.Handle("/", adapter)
+func (a *Adapter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	method := strings.ToUpper(r.Method)
+	if method != http.MethodPost && method != http.MethodGet &&
+		method != http.MethodPatch && method != http.MethodDelete {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]interface{}{"error": "Method not allowed"})
+		return
+	}
+
+	tableName := strings.Trim(r.URL.Path, "/")
+	if tableName == "" || tableName == "favicon.ico" {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "Table name required in URL"})
+		return
+	}
+
+	var queryBody map[string]interface{}
+
+	if method == http.MethodPost || method == http.MethodPatch || method == http.MethodDelete {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "Failed to read body"})
+			return
+		}
+		defer r.Body.Close()
+		if len(body) > 0 {
+			if err := json.Unmarshal(body, &queryBody); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "Invalid JSON"})
+				return
+			}
+		} else {
+			queryBody = make(map[string]interface{})
+		}
+	} else {
+		// GET: parse from ?q= or build from query params
+		if q := r.URL.Query().Get("q"); q != "" {
+			if err := json.Unmarshal([]byte(q), &queryBody); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "Invalid JSON in q parameter"})
+				return
+			}
+		} else {
+			queryBody = make(map[string]interface{})
+		}
+	}
+
+	// Infer mutation op from HTTP method
+	queryBody = InferMutationFromHTTP(method, queryBody)
+	if _, ok := queryBody["op"]; ok {
+		queryBody["from"] = tableName
+	}
+
+	resp, err := a.Handle(queryBody, tableName, r)
+	if err != nil {
+		herr := WrapError(err)
+		writeJSON(w, herr.Status, map[string]interface{}{"error": herr.Message})
+		return
+	}
+
+	writeJSON(w, resp.Status, map[string]interface{}{"data": resp.Data})
+}
+
+// Handler returns the adapter as an http.Handler (convenience alias).
+func (a *Adapter) Handler() http.Handler {
+	return a
+}
+
+func writeJSON(w http.ResponseWriter, status int, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(data)
 }
 
 func (a *Adapter) Handle(raw map[string]interface{}, tableName string, r *http.Request) (Response, error) {

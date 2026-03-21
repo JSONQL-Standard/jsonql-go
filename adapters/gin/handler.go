@@ -3,7 +3,9 @@ package jsonqlgin
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	jsonqlhttp "github.com/jsonql-standard/jsonql-go/adapters/http"
@@ -115,4 +117,76 @@ func NewHandler(opts HandlerOptions) (gin.HandlerFunc, error) {
 		c.JSON(resp.Status, resp.Data)
 	}
 	return handler, nil
+}
+
+// Handler creates a simple gin.HandlerFunc that extracts the table name from
+// the URL path and handles the full JSONQL request lifecycle.
+//
+// Usage:
+//
+//	handler, _ := jsonqlgin.Handler(opts.AdapterOptions)
+//	r := gin.Default()
+//	r.NoRoute(handler)
+func Handler(opts jsonqlhttp.AdapterOptions) (gin.HandlerFunc, error) {
+	adapter, err := jsonqlhttp.NewAdapter(opts)
+	if err != nil {
+		return nil, err
+	}
+
+	return func(c *gin.Context) {
+		method := strings.ToUpper(c.Request.Method)
+		if method != http.MethodPost && method != http.MethodGet &&
+			method != http.MethodPatch && method != http.MethodDelete {
+			c.JSON(http.StatusMethodNotAllowed, gin.H{"error": "Method not allowed"})
+			return
+		}
+
+		tableName := strings.Trim(c.Request.URL.Path, "/")
+		if tableName == "" || tableName == "favicon.ico" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Table name required in URL"})
+			return
+		}
+
+		var queryBody map[string]interface{}
+
+		if method == http.MethodPost || method == http.MethodPatch || method == http.MethodDelete {
+			body, err := io.ReadAll(c.Request.Body)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to read body"})
+				return
+			}
+			defer c.Request.Body.Close()
+			if len(body) > 0 {
+				if err := json.Unmarshal(body, &queryBody); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON"})
+					return
+				}
+			} else {
+				queryBody = make(map[string]interface{})
+			}
+		} else {
+			if q := c.Query("q"); q != "" {
+				if err := json.Unmarshal([]byte(q), &queryBody); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON in q parameter"})
+					return
+				}
+			} else {
+				queryBody = make(map[string]interface{})
+			}
+		}
+
+		queryBody = jsonqlhttp.InferMutationFromHTTP(method, queryBody)
+		if _, ok := queryBody["op"]; ok {
+			queryBody["from"] = tableName
+		}
+
+		resp, err := adapter.Handle(queryBody, tableName, c.Request)
+		if err != nil {
+			herr := jsonqlhttp.WrapError(err)
+			c.JSON(herr.Status, gin.H{"error": herr.Message})
+			return
+		}
+
+		c.JSON(resp.Status, gin.H{"data": resp.Data})
+	}, nil
 }
