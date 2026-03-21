@@ -80,6 +80,7 @@ func NewHandler(opts HandlerOptions) (echo.HandlerFunc, error) {
 		return c.JSON(resp.Status, resp.Data)
 	}, nil
 }
+
 // Handler creates a simple echo.HandlerFunc that extracts the table name from
 // the URL path and handles the full JSONQL request lifecycle.
 //

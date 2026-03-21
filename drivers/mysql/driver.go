@@ -5,8 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/jsonql-standard/jsonql-go"
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/jsonql-standard/jsonql-go"
 )
 
 // Driver implements jsonql.Driver for MySQL.
