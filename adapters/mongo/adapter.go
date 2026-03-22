@@ -202,7 +202,21 @@ func (a *Adapter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	queryBody = jsonqlhttp.InferMutationFromHTTP(method, queryBody)
+	// Infer mutation op from HTTP method when body has no explicit "op".
+	// POST with "data" key → create; POST without "data" → query.
+	// PATCH/PUT → update; DELETE → delete.
+	if _, ok := queryBody["op"]; !ok {
+		switch method {
+		case http.MethodPost:
+			if _, hasData := queryBody["data"]; hasData {
+				queryBody["op"] = "create"
+			}
+		case http.MethodPatch, http.MethodPut:
+			queryBody["op"] = "update"
+		case http.MethodDelete:
+			queryBody["op"] = "delete"
+		}
+	}
 
 	// Validate version
 	if v, ok := queryBody["version"]; ok {
