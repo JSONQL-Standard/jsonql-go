@@ -80,7 +80,7 @@ func (v *Validator) Validate(query *JSONQLQuery) error {
 	// Where fields (allowFilter) — only validate when the schema defines fields
 	if len(table.Fields) > 0 {
 		for field := range query.Where {
-			if field == "or" {
+			if field == "or" || field == "OR" || field == "and" || field == "AND" || field == "not" || field == "NOT" {
 				continue
 			}
 			fieldObj, ok := table.Fields[field]

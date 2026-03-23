@@ -88,7 +88,69 @@ func (t *MongoTranspiler) Transpile(query *JSONQLQuery, collection string) (*Mon
 		result.Skip = int64(*query.Offset)
 	}
 
-	// 6. AGGREGATE → aggregation pipeline
+	// 6. DISTINCT → aggregation pipeline with $group
+	if query.Distinct != nil && (query.Distinct.All || len(query.Distinct.Fields) > 0) && len(query.Aggregate) == 0 {
+		result.Operation = "aggregate"
+		pipeline := []map[string]interface{}{}
+
+		// Match stage (from WHERE)
+		if len(result.Filter) > 0 {
+			pipeline = append(pipeline, map[string]interface{}{"$match": result.Filter})
+		}
+
+		// Determine which fields to group on
+		distinctFields := query.Distinct.Fields
+		if query.Distinct.All && len(distinctFields) == 0 {
+			distinctFields = query.Fields
+		}
+
+		// Group stage — _id is the combination of distinct fields
+		groupId := make(map[string]interface{})
+		for _, f := range distinctFields {
+			groupId[f] = "$" + f
+		}
+		groupStage := map[string]interface{}{"_id": groupId}
+		// Carry forward the fields with $first
+		for _, f := range distinctFields {
+			groupStage[f] = map[string]interface{}{"$first": "$" + f}
+		}
+		pipeline = append(pipeline, map[string]interface{}{"$group": groupStage})
+
+		// Project stage — keep only requested fields, hide _id
+		projectStage := map[string]interface{}{"_id": 0}
+		for _, f := range distinctFields {
+			projectStage[f] = 1
+		}
+		pipeline = append(pipeline, map[string]interface{}{"$project": projectStage})
+
+		// Sort stage
+		if result.Sort != nil {
+			sortD := make(map[string]interface{})
+			for _, s := range query.Sort {
+				field := s
+				order := 1
+				if strings.HasPrefix(s, "-") {
+					field = s[1:]
+					order = -1
+				}
+				sortD[field] = order
+			}
+			pipeline = append(pipeline, map[string]interface{}{"$sort": sortD})
+		}
+
+		// Skip/Limit stages
+		if result.Skip > 0 {
+			pipeline = append(pipeline, map[string]interface{}{"$skip": result.Skip})
+		}
+		if result.Limit > 0 {
+			pipeline = append(pipeline, map[string]interface{}{"$limit": result.Limit})
+		}
+
+		result.Pipeline = pipeline
+		return result, nil
+	}
+
+	// 7. AGGREGATE → aggregation pipeline
 	if len(query.Aggregate) > 0 {
 		result.Operation = "aggregate"
 		pipeline := []map[string]interface{}{}
@@ -237,7 +299,8 @@ func (t *MongoTranspiler) processWhere(where map[string]interface{}) (map[string
 	filter := make(map[string]interface{})
 
 	for field, cond := range where {
-		if field == "or" {
+		// Handle "or" logical operator
+		if field == "or" || field == "OR" {
 			if orList, ok := cond.([]interface{}); ok {
 				orConditions := make([]interface{}, 0)
 				for _, item := range orList {
@@ -256,32 +319,79 @@ func (t *MongoTranspiler) processWhere(where map[string]interface{}) (map[string
 			continue
 		}
 
+		// Handle "and" logical operator
+		if field == "and" || field == "AND" {
+			if andList, ok := cond.([]interface{}); ok {
+				andConditions := make([]interface{}, 0)
+				for _, item := range andList {
+					if itemMap, ok := item.(map[string]interface{}); ok {
+						subFilter, err := t.processWhere(itemMap)
+						if err != nil {
+							return nil, err
+						}
+						andConditions = append(andConditions, subFilter)
+					}
+				}
+				if len(andConditions) > 0 {
+					filter["$and"] = andConditions
+				}
+			}
+			continue
+		}
+
+		// Handle "not" logical operator
+		if field == "not" || field == "NOT" {
+			if notMap, ok := cond.(map[string]interface{}); ok {
+				subFilter, err := t.processWhere(notMap)
+				if err != nil {
+					return nil, err
+				}
+				// Wrap each condition with $not/$nor
+				if len(subFilter) > 0 {
+					// Use $nor to negate the entire sub-filter
+					filter["$nor"] = []interface{}{subFilter}
+				}
+			}
+			continue
+		}
+
 		if !isValidIdentifier(field) {
 			return nil, fmt.Errorf("Invalid field name in where clause: %s", field)
 		}
 
 		if valMap, ok := cond.(map[string]interface{}); ok {
 			mongoOp := make(map[string]interface{})
+			handled := false
 			if v, ok := valMap["eq"]; ok {
+				handled = true
 				filter[field] = v
 				continue
 			}
 			if v, ok := valMap["neq"]; ok {
+				handled = true
+				mongoOp["$ne"] = v
+			} else if v, ok := valMap["ne"]; ok {
+				handled = true
 				mongoOp["$ne"] = v
 			}
 			if v, ok := valMap["gt"]; ok {
+				handled = true
 				mongoOp["$gt"] = v
 			}
 			if v, ok := valMap["gte"]; ok {
+				handled = true
 				mongoOp["$gte"] = v
 			}
 			if v, ok := valMap["lt"]; ok {
+				handled = true
 				mongoOp["$lt"] = v
 			}
 			if v, ok := valMap["lte"]; ok {
+				handled = true
 				mongoOp["$lte"] = v
 			}
 			if v, ok := valMap["like"]; ok {
+				handled = true
 				// Convert SQL LIKE to MongoDB regex
 				if s, ok := v.(string); ok {
 					pattern := strings.ReplaceAll(s, "%", ".*")
@@ -291,8 +401,41 @@ func (t *MongoTranspiler) processWhere(where map[string]interface{}) (map[string
 				}
 			}
 			if v, ok := valMap["in"]; ok {
+				handled = true
 				if slice, ok := v.([]interface{}); ok {
 					mongoOp["$in"] = slice
+				}
+			}
+			if v, ok := valMap["nin"]; ok {
+				handled = true
+				if slice, ok := v.([]interface{}); ok {
+					mongoOp["$nin"] = slice
+				}
+			}
+			if v, ok := valMap["contains"]; ok {
+				handled = true
+				if s, ok := v.(string); ok {
+					mongoOp["$regex"] = s
+					mongoOp["$options"] = "i"
+				}
+			}
+			if v, ok := valMap["starts"]; ok {
+				handled = true
+				if s, ok := v.(string); ok {
+					mongoOp["$regex"] = "^" + s
+					mongoOp["$options"] = "i"
+				}
+			}
+			if v, ok := valMap["ends"]; ok {
+				handled = true
+				if s, ok := v.(string); ok {
+					mongoOp["$regex"] = s + "$"
+					mongoOp["$options"] = "i"
+				}
+			}
+			if !handled && len(valMap) > 0 {
+				for op := range valMap {
+					return nil, fmt.Errorf("Unknown operator \"%s\" for field \"%s\"", op, field)
 				}
 			}
 			if len(mongoOp) > 0 {
