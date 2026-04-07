@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
   lint:
@@ -15,7 +15,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: "1.24"
 
       - name: Vet
         run: go vet ./...
@@ -23,7 +23,7 @@ jobs:
       - name: Check formatting
         run: |
           if [ -n "$(gofmt -l .)" ]; then
-            echo "❌ Code is not formatted. Run 'go fmt ./...'"
+            echo "Code is not formatted. Run 'go fmt ./...'"
             gofmt -d .
             exit 1
           fi
@@ -31,13 +31,16 @@ jobs:
   test:
     runs-on: ubuntu-latest
     needs: lint
+    strategy:
+      matrix:
+        go-version: ["1.23", "1.24"]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Go
+      - name: Set up Go ${{ matrix.go-version }}
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: ${{ matrix.go-version }}
 
       - name: Install gotestsum
         run: go install gotest.tools/gotestsum@latest
@@ -49,8 +52,101 @@ jobs:
         run: gotestsum --format testname -- -race -coverprofile=coverage.out ./...
 
       - name: Upload coverage
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && matrix.go-version == '1.24'
         uses: actions/upload-artifact@v4
         with:
           name: coverage
           path: coverage.out
+
+  integration:
+    runs-on: ubuntu-latest
+    needs: test
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: jsonql
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: jsonql_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U jsonql"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    strategy:
+      fail-fast: false
+      matrix:
+        adapter:
+          - name: go-http-simple
+            port: 8080
+            test-path: tests/unified
+          - name: go-http-lifecycle
+            port: 8081
+            test-path: tests/unified/lifecycle
+          - name: go-gin-simple
+            port: 8082
+            test-path: tests/unified
+          - name: go-gin-lifecycle
+            port: 8083
+            test-path: tests/unified/lifecycle
+          - name: go-echo-simple
+            port: 8084
+            test-path: tests/unified
+          - name: go-echo-lifecycle
+            port: 8085
+            test-path: tests/unified/lifecycle
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: jsonql-go
+
+      - uses: actions/checkout@v4
+        with:
+          repository: JSONQL-Standard/jsonql-tests
+          token: ${{ secrets.JSONQL_TESTS_TOKEN }}
+          path: jsonql-tests
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test runner dependencies
+        run: pip install -r jsonql-tests/requirements.txt
+
+      - name: Build and start ${{ matrix.adapter.name }}
+        run: |
+          cd jsonql-tests/integration-tests/${{ matrix.adapter.name }}
+          DB_TYPE=postgres \
+          DB_DSN="postgresql://jsonql:password@localhost:5432/jsonql_test?sslmode=disable" \
+          JSONQL_SCHEMA_PATH="${{ github.workspace }}/jsonql-tests/fixtures/standard/schema.json" \
+          PORT=${{ matrix.adapter.port }} \
+          go run . &
+
+          # Wait for server to be ready
+          for i in $(seq 1 30); do
+            if curl -s http://localhost:${{ matrix.adapter.port }}/health 2>/dev/null | grep -q status; then
+              echo "Server ready"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Run compliance tests against ${{ matrix.adapter.name }}
+        run: |
+          cd jsonql-tests
+          python -m pytest tests/ \
+            --target=http://localhost:${{ matrix.adapter.port }} \
+            --db-type=postgres \
+            --db-dsn="postgresql://jsonql:password@localhost:5432/jsonql_test?sslmode=disable" \
+            --test-path=${{ matrix.adapter.test-path }} \
+            -q --tb=short
