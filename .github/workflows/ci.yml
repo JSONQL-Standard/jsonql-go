@@ -127,23 +127,41 @@ jobs:
       - name: Install test runner dependencies
         run: pip install -r jsonql-tests/requirements.txt
 
-      - name: Build and start ${{ matrix.adapter.name }}
+      - name: Build ${{ matrix.adapter.name }}
+        run: |
+          cd jsonql-tests/integration-tests/${{ matrix.adapter.name }}
+          go build -o ./server .
+
+      - name: Start ${{ matrix.adapter.name }}
         run: |
           cd jsonql-tests/integration-tests/${{ matrix.adapter.name }}
           DB_TYPE=postgres \
           DB_DSN="postgresql://jsonql:password@localhost:5432/jsonql_test?sslmode=disable" \
           JSONQL_SCHEMA_PATH="${{ github.workspace }}/jsonql-tests/fixtures/standard/schema.json" \
           PORT=${{ matrix.adapter.port }} \
-          go run . &
+          ./server > /tmp/server.log 2>&1 &
+          echo $! > /tmp/server.pid
 
           # Wait for server to be ready
           for i in $(seq 1 30); do
             if curl -s http://localhost:${{ matrix.adapter.port }}/health 2>/dev/null | grep -q status; then
-              echo "Server ready"
+              echo "Server ready on port ${{ matrix.adapter.port }}"
               break
+            fi
+            if ! kill -0 $(cat /tmp/server.pid) 2>/dev/null; then
+              echo "Server process died. Logs:"
+              cat /tmp/server.log
+              exit 1
             fi
             sleep 2
           done
+
+          # Final check
+          if ! curl -sf http://localhost:${{ matrix.adapter.port }}/health > /dev/null 2>&1; then
+            echo "Server failed to start. Logs:"
+            cat /tmp/server.log
+            exit 1
+          fi
 
       - name: Run compliance tests against ${{ matrix.adapter.name }}
         run: |
@@ -154,3 +172,9 @@ jobs:
             --db-dsn="postgresql://jsonql:password@localhost:5432/jsonql_test?sslmode=disable" \
             --test-path=${{ matrix.adapter.test-path }} \
             -q --tb=short
+
+      - name: Dump server logs on failure
+        if: failure()
+        run: |
+          echo "=== Server logs ==="
+          cat /tmp/server.log 2>/dev/null || echo "No logs found"
