@@ -51,7 +51,7 @@ import (
 
 ## Quick Start
 
-A working JSONQL API with Gin:
+A working JSONQL API in under 20 lines:
 
 ```go
 // main.go
@@ -59,50 +59,49 @@ package main
 
 import (
     "log"
-    "net/http"
 
     "github.com/gin-gonic/gin"
     jsonql "github.com/jsonql-standard/jsonql-go"
     jsonqlgin "github.com/jsonql-standard/jsonql-go/adapters/gin"
+    jsonqlhttp "github.com/jsonql-standard/jsonql-go/adapters/http"
     _ "github.com/jsonql-standard/jsonql-go/drivers/postgres"
 )
 
 func main() {
-    driver, err := jsonql.CreateDriver("postgres") // reads DB_DSN from env
-    if err != nil {
-        log.Fatal(err)
-    }
+    driver, _ := jsonql.CreateDriver("postgres") // reads DB_DSN from env
     defer driver.Close()
 
-    schema := &jsonql.JSONQLSchema{
-        Tables: map[string]*jsonql.JSONQLTable{
-            "users": {
-                Fields: map[string]*jsonql.JSONQLField{
-                    "id":   {Type: "number"},
-                    "name": {Type: "string"},
-                    "age":  {Type: "number"},
-                },
-            },
-        },
-    }
-
-    handler, err := jsonqlgin.Handler(jsonqlgin.AdapterOptions{
-        Driver:  driver,
-        Dialect: "postgres",
-        Schema:  schema,
+    handler, _ := jsonqlgin.Handler(jsonqlhttp.AdapterOptions{
+        Driver: driver,                          // dialect auto-detected
+        Schema: jsonql.MustLoadSchema("schema.json"), // or define inline
     })
-    if err != nil {
-        log.Fatal(err)
-    }
 
     r := gin.Default()
-    r.POST("/:table", handler)
-    r.GET("/:table", handler)
-
+    r.NoRoute(handler) // handles GET/POST/PATCH/DELETE on /:table
     log.Println("JSONQL API → http://localhost:8080")
     r.Run(":8080")
 }
 ```
+
+<details>
+<summary>schema.json</summary>
+
+```json
+{
+  "tables": {
+    "users": {
+      "fields": {
+        "id":   { "type": "number" },
+        "name": { "type": "string" },
+        "age":  { "type": "number" }
+      }
+    }
+  }
+}
+```
+</details>
+
+> **Prefer inline?** Replace `MustLoadSchema(...)` with a `&jsonql.JSONQLSchema{...}` literal — see [Schema Validation](#schema-validation).
 
 ```bash
 export DB_DSN="postgresql://user:pass@localhost:5432/mydb?sslmode=disable"
@@ -246,9 +245,8 @@ import (
 
 driver, _ := jsonql.CreateDriver("postgres")
 adapter, _ := jsonqlhttp.NewAdapter(jsonqlhttp.AdapterOptions{
-    Driver:  driver,
-    Dialect: "postgres",
-    Schema:  schema,
+    Driver: driver,
+    Schema: jsonql.MustLoadSchema("schema.json"),
 })
 
 http.Handle("/", adapter) // implements http.Handler
@@ -266,15 +264,15 @@ import (
     "github.com/labstack/echo/v4"
     jsonql "github.com/jsonql-standard/jsonql-go"
     jsonqlecho "github.com/jsonql-standard/jsonql-go/adapters/echo"
+    jsonqlhttp "github.com/jsonql-standard/jsonql-go/adapters/http"
     _ "github.com/jsonql-standard/jsonql-go/drivers/postgres"
 )
 
 driver, _ := jsonql.CreateDriver("postgres")
 handler, _ := jsonqlecho.NewHandler(jsonqlecho.HandlerOptions{
     AdapterOptions: jsonqlhttp.AdapterOptions{
-        Driver:  driver,
-        Dialect: "postgres",
-        Schema:  schema,
+        Driver: driver,
+        Schema: jsonql.MustLoadSchema("schema.json"),
     },
 })
 
