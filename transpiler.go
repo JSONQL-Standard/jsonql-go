@@ -124,8 +124,18 @@ func (t *Transpiler) Transpile(query *JSONQLQuery, tableName string, schema *JSO
 		if query.Distinct.All {
 			distinctKeyword = "DISTINCT "
 		} else if len(query.Distinct.Fields) > 0 {
-			// DISTINCT ON is Postgres-only; for portability, use SELECT DISTINCT with specific fields
 			distinctKeyword = "DISTINCT "
+			// Override SELECT clause when distinct is a field array and no explicit fields set
+			if selectClause == "*" {
+				var parts []string
+				for _, f := range query.Distinct.Fields {
+					if !isValidIdentifier(f) {
+						return nil, fmt.Errorf("Invalid distinct field: %s", f)
+					}
+					parts = append(parts, fmt.Sprintf("%s.%s", t.quoteIdentifier(tableName), t.quoteIdentifier(f)))
+				}
+				selectClause = strings.Join(parts, ", ")
+			}
 		}
 	}
 
