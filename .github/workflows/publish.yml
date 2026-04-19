@@ -1,0 +1,69 @@
+name: Publish Go Module
+
+# Go modules are published automatically via proxy.golang.org when a version
+# tag is pushed. This workflow validates the tag, runs tests, and triggers
+# the Go module proxy to fetch the new version.
+
+on:
+  release:
+    types: [published]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: ["1.23", "1.24"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go ${{ matrix.go-version }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      - name: Install gotestsum
+        run: go install gotest.tools/gotestsum@latest
+
+      - name: Build
+        run: make build
+
+      - name: Test with race detector
+        run: gotestsum --format testname -- -race ./...
+
+  publish:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Validate tag matches Go module
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          echo "Release tag: $TAG"
+
+          # Ensure tag starts with v and matches semver
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+            echo "Error: Tag '$TAG' is not a valid semver tag"
+            exit 1
+          fi
+
+          echo "✓ Valid Go module version tag: $TAG"
+
+      - name: Trigger Go module proxy
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          MODULE="github.com/${{ github.repository }}"
+          echo "Requesting proxy.golang.org to fetch ${MODULE}@${TAG}..."
+          curl -sf "https://proxy.golang.org/${MODULE}/@v/${TAG}.info" || echo "Proxy will index on first request"
+          echo ""
+          echo "Module will be available at:"
+          echo "  https://pkg.go.dev/${MODULE}@${TAG}"

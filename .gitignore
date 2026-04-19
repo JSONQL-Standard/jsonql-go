@@ -26,3 +26,4 @@ go.work.sum
 
 # local artifacts
 supply-chain.db
+.codegraph/
