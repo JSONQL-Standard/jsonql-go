@@ -245,6 +245,9 @@ func (a *Adapter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if herr.Code != "" {
 			errResp["error_code"] = herr.Code
 		}
+		if herr.Details != "" {
+			errResp["details"] = herr.Details
+		}
 		jsonqlhttp.WriteJSON(w, herr.Status, errResp)
 		return
 	}

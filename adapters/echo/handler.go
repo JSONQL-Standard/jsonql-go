@@ -148,6 +148,9 @@ func Handler(opts jsonqlhttp.AdapterOptions) (echo.HandlerFunc, error) {
 			if herr.Code != "" {
 				errResp["error_code"] = herr.Code
 			}
+			if herr.Details != "" {
+				errResp["details"] = herr.Details
+			}
 			return c.JSON(herr.Status, errResp)
 		}
 

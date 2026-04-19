@@ -24,6 +24,7 @@ type ParserOptionsResolver func(r *http.Request) *jsonql.ParserOptions
 type HandlerError struct {
 	Status  int
 	Message string
+	Details string
 	Code    string
 }
 
@@ -207,6 +208,9 @@ func (a *Adapter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		errResp := map[string]interface{}{"error": herr.Message}
 		if herr.Code != "" {
 			errResp["error_code"] = herr.Code
+		}
+		if herr.Details != "" {
+			errResp["details"] = herr.Details
 		}
 		WriteJSON(w, herr.Status, errResp)
 		return
@@ -568,7 +572,14 @@ func WrapError(err error) *HandlerError {
 			status = http.StatusInternalServerError
 		}
 	}
-	return &HandlerError{Status: status, Message: err.Error(), Code: code}
+	msg := err.Error()
+	details := ""
+	// Wrap parse/validation errors with a generic message, put specifics in details
+	if code == "PARSE_ERROR" || code == "VALIDATION_ERROR" {
+		details = msg
+		msg = "Invalid JSONQL Query"
+	}
+	return &HandlerError{Status: status, Message: msg, Details: details, Code: code}
 }
 
 func EnsureContext(r *http.Request) context.Context {

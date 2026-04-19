@@ -114,6 +114,9 @@ func NewHandler(opts HandlerOptions) (gin.HandlerFunc, error) {
 			if herr.Code != "" {
 				errResp["error_code"] = herr.Code
 			}
+			if herr.Details != "" {
+				errResp["details"] = herr.Details
+			}
 			c.JSON(herr.Status, errResp)
 			return
 		}
@@ -190,6 +193,9 @@ func Handler(opts jsonqlhttp.AdapterOptions) (gin.HandlerFunc, error) {
 			errResp := gin.H{"error": herr.Message}
 			if herr.Code != "" {
 				errResp["error_code"] = herr.Code
+			}
+			if herr.Details != "" {
+				errResp["details"] = herr.Details
 			}
 			c.JSON(herr.Status, errResp)
 			return
