@@ -358,8 +358,9 @@ func (a *Adapter) engineForRequest(r *http.Request, raw map[string]interface{}, 
 		WithDriver(a.driver).
 		WithLogger(a.logger)
 
-	// Only pass schema if it has fields for this table (skip empty validation)
-	if schema != nil && hasTableFields(schema, tableName) {
+	// Always pass schema — transpiler needs it for relationship/join resolution.
+	// The engine skips field validation when the table has no fields in schema.
+	if schema != nil {
 		builder.Schema(schema)
 	}
 

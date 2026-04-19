@@ -50,8 +50,10 @@ func (e *Engine) Execute(ctx context.Context, raw map[string]interface{}, table 
 		return nil, err
 	}
 
-	// 2. Validate (if schema is set)
-	if e.schema != nil {
+	// 2. Validate (if schema is set and table has fields defined).
+	// Skip validation for tables without explicit field definitions —
+	// the schema may still be needed for relationship/join resolution.
+	if e.schema != nil && e.hasTableFields(table) {
 		validator := NewValidator(e.schema, table)
 		if vErr := validator.Validate(query); vErr != nil {
 			return nil, vErr
@@ -133,6 +135,17 @@ func (e *Engine) exec(ctx context.Context, sqlStr string, args []interface{}) (*
 		return e.executor(ctx, sqlStr, args)
 	}
 	return nil, fmt.Errorf("no driver or executor configured")
+}
+
+func (e *Engine) hasTableFields(table string) bool {
+	if e.schema == nil || e.schema.Tables == nil {
+		return false
+	}
+	t, ok := e.schema.Tables[table]
+	if !ok || t == nil {
+		return false
+	}
+	return len(t.Fields) > 0
 }
 
 func (e *Engine) isMutation(raw map[string]interface{}) bool {
