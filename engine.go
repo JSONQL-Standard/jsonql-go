@@ -44,20 +44,17 @@ func (e *Engine) Execute(ctx context.Context, raw map[string]interface{}, table 
 		return e.executeMutation(ctx, raw, table)
 	}
 
-	// 1. Parse
-	query, err := e.parser.Parse(raw, e.schema, table)
+	// 1. Parse (with validation).
+	// Only pass schema to the parser when the table has field definitions —
+	// the parser triggers schema validation when schema is non-nil.
+	// The full schema is still passed to the transpiler for join resolution.
+	validationSchema := e.schema
+	if e.schema != nil && !e.hasTableFields(table) {
+		validationSchema = nil
+	}
+	query, err := e.parser.Parse(raw, validationSchema, table)
 	if err != nil {
 		return nil, err
-	}
-
-	// 2. Validate (if schema is set and table has fields defined).
-	// Skip validation for tables without explicit field definitions —
-	// the schema may still be needed for relationship/join resolution.
-	if e.schema != nil && e.hasTableFields(table) {
-		validator := NewValidator(e.schema, table)
-		if vErr := validator.Validate(query); vErr != nil {
-			return nil, vErr
-		}
 	}
 
 	return e.executeQuery(ctx, query, table)
