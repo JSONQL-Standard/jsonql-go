@@ -36,6 +36,18 @@ func NewParserWithOptions(opts *ParserOptions) *Parser {
 
 // Parse parses and validates a JSONQL query from a raw map
 func (p *Parser) Parse(input map[string]interface{}, schema *JSONQLSchema, table string) (*JSONQLQuery, error) {
+	query, err := p.doParse(input, schema, table)
+	if err != nil {
+		// Already a typed JSONQL error (e.g. validation)? Pass through.
+		if _, ok := err.(JsonQLError); ok {
+			return nil, err
+		}
+		return nil, &JsonQLParseError{Msg: err.Error(), Cause: err}
+	}
+	return query, nil
+}
+
+func (p *Parser) doParse(input map[string]interface{}, schema *JSONQLSchema, table string) (*JSONQLQuery, error) {
 	// Validate for unknown top-level keys
 	allowedKeys := map[string]bool{
 		"version": true, "from": true, "where": true, "sort": true,
@@ -104,18 +116,26 @@ func (p *Parser) Parse(input map[string]interface{}, schema *JSONQLSchema, table
 func (p *Parser) ParseJSON(input []byte) (*JSONQLQuery, error) {
 	var query JSONQLQuery
 	if err := json.Unmarshal(input, &query); err != nil {
-		return nil, fmt.Errorf("invalid JSON: %w", err)
+		return nil, &JsonQLParseError{Msg: fmt.Sprintf("invalid JSON: %v", err), Cause: err}
 	}
 
 	if err := p.Validate(&query); err != nil {
-		return nil, err
+		return nil, &JsonQLParseError{Msg: err.Error(), Cause: err}
 	}
 
 	return &query, nil
 }
 
-// Validate checks if the query is valid, applying parser options
+// Validate checks if the query is valid, applying parser options.
+// Returns a JsonQLParseError for structural validation failures.
 func (p *Parser) Validate(query *JSONQLQuery) error {
+	if err := p.doValidate(query); err != nil {
+		return &JsonQLParseError{Msg: err.Error(), Cause: err}
+	}
+	return nil
+}
+
+func (p *Parser) doValidate(query *JSONQLQuery) error {
 	// Check version
 	if query.Version != "" && query.Version != "1.0" && query.Version != "1.1" {
 		return errors.New("Query version must be \"1.0\" or \"1.1\"")

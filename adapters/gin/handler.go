@@ -110,7 +110,11 @@ func NewHandler(opts HandlerOptions) (gin.HandlerFunc, error) {
 		resp, err := adapter.Handle(queryBody, tableName, c.Request)
 		if err != nil {
 			herr := jsonqlhttp.WrapError(err)
-			c.JSON(herr.Status, gin.H{"error": herr.Message})
+			errResp := gin.H{"error": herr.Message}
+			if herr.Code != "" {
+				errResp["error_code"] = herr.Code
+			}
+			c.JSON(herr.Status, errResp)
 			return
 		}
 
@@ -183,7 +187,11 @@ func Handler(opts jsonqlhttp.AdapterOptions) (gin.HandlerFunc, error) {
 		resp, err := adapter.Handle(queryBody, tableName, c.Request)
 		if err != nil {
 			herr := jsonqlhttp.WrapError(err)
-			c.JSON(herr.Status, gin.H{"error": herr.Message})
+			errResp := gin.H{"error": herr.Message}
+			if herr.Code != "" {
+				errResp["error_code"] = herr.Code
+			}
+			c.JSON(herr.Status, errResp)
 			return
 		}
 

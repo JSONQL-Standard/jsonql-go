@@ -49,6 +49,15 @@ func NewValidator(schema *JSONQLSchema, table string) *Validator {
 }
 
 func (v *Validator) Validate(query *JSONQLQuery) error {
+	if err := v.doValidate(query); err != nil {
+		return &JsonQLValidationError{
+			Errors: []ValidationError{{Message: err.Error(), Code: "VALIDATION_ERROR"}},
+		}
+	}
+	return nil
+}
+
+func (v *Validator) doValidate(query *JSONQLQuery) error {
 	// Check global settings
 	if v.schema.Settings != nil {
 		if !v.schema.Settings.AllowAggregate && (len(query.Aggregate) > 0 || len(query.GroupBy) > 0) {

@@ -74,7 +74,11 @@ func NewHandler(opts HandlerOptions) (echo.HandlerFunc, error) {
 		resp, err := adapter.Handle(queryBody, tableName, c.Request())
 		if err != nil {
 			herr := jsonqlhttp.WrapError(err)
-			return c.JSON(herr.Status, map[string]string{"error": herr.Message})
+			errResp := map[string]string{"error": herr.Message}
+			if herr.Code != "" {
+				errResp["error_code"] = herr.Code
+			}
+			return c.JSON(herr.Status, errResp)
 		}
 
 		return c.JSON(resp.Status, resp.Data)
@@ -140,7 +144,11 @@ func Handler(opts jsonqlhttp.AdapterOptions) (echo.HandlerFunc, error) {
 		resp, handleErr := adapter.Handle(queryBody, tableName, c.Request())
 		if handleErr != nil {
 			herr := jsonqlhttp.WrapError(handleErr)
-			return c.JSON(herr.Status, map[string]interface{}{"error": herr.Message})
+			errResp := map[string]interface{}{"error": herr.Message}
+			if herr.Code != "" {
+				errResp["error_code"] = herr.Code
+			}
+			return c.JSON(herr.Status, errResp)
 		}
 
 		return c.JSON(resp.Status, map[string]interface{}{"data": resp.Data})

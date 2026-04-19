@@ -24,6 +24,7 @@ type ParserOptionsResolver func(r *http.Request) *jsonql.ParserOptions
 type HandlerError struct {
 	Status  int
 	Message string
+	Code    string
 }
 
 func (e *HandlerError) Error() string {
@@ -59,12 +60,14 @@ type Response struct {
 }
 
 type Adapter struct {
-	parser     *jsonql.Parser
-	transpiler *jsonql.Transpiler
-	driver     jsonql.Driver
-	hydrator   *jsonql.Hydrator
-	options    AdapterOptions
-	logger     jsonql.Logger
+	parser      *jsonql.Parser
+	transpiler  *jsonql.Transpiler
+	driver      jsonql.Driver
+	hydrator    *jsonql.Hydrator
+	engine      *jsonql.Engine
+	dialectName string
+	options     AdapterOptions
+	logger      jsonql.Logger
 }
 
 func NewAdapter(opts AdapterOptions) (*Adapter, error) {
@@ -97,13 +100,28 @@ func NewAdapter(opts AdapterOptions) (*Adapter, error) {
 		parser = jsonql.NewParserWithOptions(opts.ParserOptions)
 	}
 
+	// Build Engine for core pipeline delegation
+	engineBuilder := jsonql.NewEngineBuilder().
+		Dialect(dialect).
+		WithDriver(opts.Driver).
+		WithLogger(logger)
+	if opts.Schema != nil {
+		engineBuilder.Schema(opts.Schema)
+	}
+	if opts.ParserOptions != nil {
+		engineBuilder.ParserOpts(opts.ParserOptions)
+	}
+	engine := engineBuilder.Build()
+
 	return &Adapter{
-		parser:     parser,
-		transpiler: jsonql.NewTranspilerWithLogger(dialect, logger),
-		driver:     opts.Driver,
-		hydrator:   jsonql.NewHydratorWithLogger(logger),
-		options:    opts,
-		logger:     logger,
+		parser:      parser,
+		transpiler:  jsonql.NewTranspilerWithLogger(dialect, logger),
+		driver:      opts.Driver,
+		hydrator:    jsonql.NewHydratorWithLogger(logger),
+		engine:      engine,
+		dialectName: dialect,
+		options:     opts,
+		logger:      logger,
 	}, nil
 }
 
@@ -186,7 +204,11 @@ func (a *Adapter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	resp, err := a.Handle(queryBody, tableName, r)
 	if err != nil {
 		herr := WrapError(err)
-		WriteJSON(w, herr.Status, map[string]interface{}{"error": herr.Message})
+		errResp := map[string]interface{}{"error": herr.Message}
+		if herr.Code != "" {
+			errResp["error_code"] = herr.Code
+		}
+		WriteJSON(w, herr.Status, errResp)
 		return
 	}
 
@@ -293,41 +315,16 @@ func (a *Adapter) handleQuery(raw map[string]interface{}, tableName string, r *h
 		}
 	}
 
-	schema := a.resolveSchema(r, query, tableName)
-	validationSchema := schema
-	if schema != nil && !hasTableFields(schema, tableName) {
-		validationSchema = nil
-	}
+	// Resolve schema and engine for this request
+	engine := a.engineForRequest(r, query, tableName)
 
-	// Per-request parser options
-	parser := a.parser
-	if a.options.ParserOptionsResolve != nil {
-		if opts := a.options.ParserOptionsResolve(r); opts != nil {
-			parser = jsonql.NewParserWithOptions(opts)
-		}
-	}
-
-	parsedQuery, err := parser.Parse(query, validationSchema, tableName)
+	// Delegate core pipeline to Engine: parse → validate → transpile → execute → hydrate
+	result, err := engine.Execute(r.Context(), query, tableName)
 	if err != nil {
-		return Response{}, &HandlerError{Status: http.StatusBadRequest, Message: "Invalid JSONQL Query"}
+		return Response{}, err
 	}
 
-	result, err := a.transpiler.Transpile(parsedQuery, tableName, schema)
-	if err != nil {
-		return Response{}, &HandlerError{Status: http.StatusBadRequest, Message: fmt.Sprintf("Transpile error: %v", err)}
-	}
-
-	rows, err := a.driver.Query(r.Context(), result.SQL, result.Args)
-	if err != nil {
-		return Response{}, &HandlerError{Status: http.StatusInternalServerError, Message: fmt.Sprintf("Database error: %v", err)}
-	}
-	defer rows.Close()
-
-	data, err := a.hydrator.Hydrate(rows, schema, tableName)
-	if err != nil {
-		return Response{}, &HandlerError{Status: http.StatusInternalServerError, Message: fmt.Sprintf("Hydration error: %v", err)}
-	}
-
+	data := result.Data
 	if a.options.AfterQuery != nil {
 		updated, err := a.options.AfterQuery(data, r)
 		if err != nil {
@@ -339,6 +336,38 @@ func (a *Adapter) handleQuery(raw map[string]interface{}, tableName string, r *h
 	}
 
 	return Response{Status: http.StatusOK, Data: data}, nil
+}
+
+// engineForRequest returns the pre-built engine or builds a per-request engine
+// when per-request schema resolution or parser options are needed.
+func (a *Adapter) engineForRequest(r *http.Request, raw map[string]interface{}, tableName string) *jsonql.Engine {
+	schema := a.resolveSchema(r, raw, tableName)
+	needsCustomEngine := a.options.SchemaResolve != nil || a.options.ParserOptionsResolve != nil
+
+	if !needsCustomEngine && schema == a.options.Schema {
+		return a.engine
+	}
+
+	// Build a per-request engine (cheap — just assembles pointers, reuses driver)
+	builder := jsonql.NewEngineBuilder().
+		Dialect(a.dialectName).
+		WithDriver(a.driver).
+		WithLogger(a.logger)
+
+	// Only pass schema if it has fields for this table (skip empty validation)
+	if schema != nil && hasTableFields(schema, tableName) {
+		builder.Schema(schema)
+	}
+
+	if a.options.ParserOptionsResolve != nil {
+		if opts := a.options.ParserOptionsResolve(r); opts != nil {
+			builder.ParserOpts(opts)
+		}
+	} else if a.options.ParserOptions != nil {
+		builder.ParserOpts(a.options.ParserOptions)
+	}
+
+	return builder.Build()
 }
 
 func (a *Adapter) handleMutation(op string, raw map[string]interface{}, tableName string, r *http.Request) (Response, error) {
@@ -526,7 +555,20 @@ func WrapError(err error) *HandlerError {
 	if herr, ok := err.(*HandlerError); ok {
 		return herr
 	}
-	return &HandlerError{Status: http.StatusBadRequest, Message: err.Error()}
+	// Extract error code and determine status from JSONQL typed errors
+	type coder interface {
+		Code() string
+	}
+	code := ""
+	status := http.StatusBadRequest
+	if c, ok := err.(coder); ok {
+		code = c.Code()
+		// Execution errors are server-side (5xx)
+		if code == "EXECUTION_ERROR" {
+			status = http.StatusInternalServerError
+		}
+	}
+	return &HandlerError{Status: status, Message: err.Error(), Code: code}
 }
 
 func EnsureContext(r *http.Request) context.Context {

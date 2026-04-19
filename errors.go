@@ -40,3 +40,13 @@ type JsonQLExecutionError struct {
 func (e *JsonQLExecutionError) Error() string { return e.Msg }
 func (e *JsonQLExecutionError) Code() string  { return "EXECUTION_ERROR" }
 func (e *JsonQLExecutionError) Unwrap() error { return e.Cause }
+
+// JsonQLParseError is returned when query parsing fails.
+type JsonQLParseError struct {
+	Msg   string
+	Cause error
+}
+
+func (e *JsonQLParseError) Error() string { return e.Msg }
+func (e *JsonQLParseError) Code() string  { return "PARSE_ERROR" }
+func (e *JsonQLParseError) Unwrap() error { return e.Cause }

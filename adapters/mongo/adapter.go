@@ -222,14 +222,14 @@ func (a *Adapter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if v, ok := queryBody["version"]; ok {
 		vs := fmt.Sprintf("%v", v)
 		if vs != "1" && vs != "1.0" && vs != "1.1" {
-			jsonqlhttp.WriteError(w, "Invalid JSONQL Query", http.StatusBadRequest)
+			jsonqlhttp.WriteJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "Invalid JSONQL Query", "error_code": "PARSE_ERROR"})
 			return
 		}
 	}
 	// Validate fields
 	if fields, ok := queryBody["fields"]; ok {
 		if arr, ok := fields.([]interface{}); ok && len(arr) == 0 {
-			jsonqlhttp.WriteError(w, "Invalid JSONQL Query", http.StatusBadRequest)
+			jsonqlhttp.WriteJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "Invalid JSONQL Query", "error_code": "PARSE_ERROR"})
 			return
 		}
 	}
@@ -241,7 +241,11 @@ func (a *Adapter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	resp, err := a.Handle(queryBody, tableName, r)
 	if err != nil {
 		herr := jsonqlhttp.WrapError(err)
-		jsonqlhttp.WriteJSON(w, herr.Status, map[string]interface{}{"error": herr.Message})
+		errResp := map[string]interface{}{"error": herr.Message}
+		if herr.Code != "" {
+			errResp["error_code"] = herr.Code
+		}
+		jsonqlhttp.WriteJSON(w, herr.Status, errResp)
 		return
 	}
 
@@ -306,12 +310,12 @@ func (a *Adapter) handleQuery(raw map[string]interface{}, tableName string, r *h
 
 	parsed, err := parser.Parse(query, validationSchema, tableName)
 	if err != nil {
-		return jsonqlhttp.Response{}, &jsonqlhttp.HandlerError{Status: http.StatusBadRequest, Message: "Invalid JSONQL Query"}
+		return jsonqlhttp.Response{}, err
 	}
 
 	mongoResult, err := a.transpiler.Transpile(parsed, tableName)
 	if err != nil {
-		return jsonqlhttp.Response{}, &jsonqlhttp.HandlerError{Status: http.StatusBadRequest, Message: fmt.Sprintf("Transpile error: %v", err)}
+		return jsonqlhttp.Response{}, &jsonql.JsonQLTranspileError{Msg: fmt.Sprintf("Transpile error: %v", err)}
 	}
 
 	var results []map[string]interface{}
