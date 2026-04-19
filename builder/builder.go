@@ -118,6 +118,18 @@ func (b *QueryBuilder) Include(include map[string]interface{}) *QueryBuilder {
 	return b
 }
 
+// Distinct enables SELECT DISTINCT. Pass true for all fields.
+func (b *QueryBuilder) Distinct(all bool) *QueryBuilder {
+	b.query.Distinct = &jsonql.DistinctOption{All: all}
+	return b
+}
+
+// DistinctFields enables SELECT DISTINCT on specific fields.
+func (b *QueryBuilder) DistinctFields(fields ...string) *QueryBuilder {
+	b.query.Distinct = &jsonql.DistinctOption{Fields: fields}
+	return b
+}
+
 // Build returns the constructed JSONQLQuery
 func (b *QueryBuilder) Build() *jsonql.JSONQLQuery {
 	return b.query
@@ -279,4 +291,9 @@ func Or(conditions ...map[string]interface{}) map[string]interface{} {
 // Not creates a NOT logical condition
 func Not(condition map[string]interface{}) map[string]interface{} {
 	return map[string]interface{}{"not": condition}
+}
+
+// FieldRef creates a field reference for field-to-field comparisons: {"field": "columnName"}
+func FieldRef(fieldName string) map[string]interface{} {
+	return map[string]interface{}{"field": fieldName}
 }

@@ -579,7 +579,11 @@ func (t *Transpiler) processWhere(where map[string]interface{}, tableAlias strin
 			}
 			if v, ok := valMap["neq"]; ok {
 				handled = true
-				if v == nil {
+				if rhs, isRef, err := resolveFieldRef(v); err != nil {
+					return nil, nil, err
+				} else if isRef {
+					conditions = append(conditions, fmt.Sprintf("%s.%s != %s", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field), rhs))
+				} else if v == nil {
 					conditions = append(conditions, fmt.Sprintf("%s.%s IS NOT NULL", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
 				} else {
 					conditions = append(conditions, fmt.Sprintf("%s.%s != ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
@@ -587,7 +591,11 @@ func (t *Transpiler) processWhere(where map[string]interface{}, tableAlias strin
 				}
 			} else if v, ok := valMap["ne"]; ok {
 				handled = true
-				if v == nil {
+				if rhs, isRef, err := resolveFieldRef(v); err != nil {
+					return nil, nil, err
+				} else if isRef {
+					conditions = append(conditions, fmt.Sprintf("%s.%s != %s", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field), rhs))
+				} else if v == nil {
 					conditions = append(conditions, fmt.Sprintf("%s.%s IS NOT NULL", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
 				} else {
 					conditions = append(conditions, fmt.Sprintf("%s.%s != ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
