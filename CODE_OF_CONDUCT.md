@@ -59,7 +59,7 @@ an online or offline event.
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
 reported to the community leaders responsible for enforcement at
-law108000@gmail.com. Reports may also be sent to conduct@jsonql.dev if that
+conduct@jsonql.org. Reports may also be sent to conduct@jsonql.org if that
 address is configured.
 
 All complaints will be reviewed and investigated promptly and fairly. Community
