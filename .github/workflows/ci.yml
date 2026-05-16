@@ -130,6 +130,7 @@ jobs:
       - name: Build ${{ matrix.adapter.name }}
         run: |
           cd jsonql-tests/integration-tests/${{ matrix.adapter.name }}
+          go mod tidy
           go build -o ./server .
 
       - name: Start ${{ matrix.adapter.name }}

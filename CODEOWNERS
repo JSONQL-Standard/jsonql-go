@@ -1,0 +1,9 @@
+# JSONQL code owners
+
+* @JSONQL-Standard/maintainers
+
+/.github/ @JSONQL-Standard/maintainers
+/SECURITY.md @JSONQL-Standard/maintainers
+/CODE_OF_CONDUCT.md @JSONQL-Standard/maintainers
+/CODEOWNERS @JSONQL-Standard/maintainers
+/LICENSE @JSONQL-Standard/maintainers
