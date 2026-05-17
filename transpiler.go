@@ -474,94 +474,36 @@ func (t *Transpiler) processJoin(
 	return nil
 }
 
+// comparisonOps maps JSONQL comparison operator keys → SQL operator symbols.
+var comparisonOps = map[string]string{
+	"eq":  "=",
+	"ne":  "!=",
+	"neq": "!=",
+	"gt":  ">",
+	"gte": ">=",
+	"lt":  "<",
+	"lte": "<=",
+}
+
+// likeOps maps JSONQL LIKE-pattern operator keys → SQL LIKE pattern builders.
+var likeOps = map[string]func(interface{}) string{
+	"contains": func(v interface{}) string { return fmt.Sprintf("%%%v%%", v) },
+	"starts":   func(v interface{}) string { return fmt.Sprintf("%v%%", v) },
+	"ends":     func(v interface{}) string { return fmt.Sprintf("%%%v", v) },
+}
+
 func (t *Transpiler) processWhere(where map[string]interface{}, tableAlias string) ([]string, []interface{}, error) {
 	var conditions []string
 	var args []interface{}
 
-	resolveFieldRef := func(value interface{}) (string, bool, error) {
-		refMap, ok := value.(map[string]interface{})
-		if !ok {
-			return "", false, nil
-		}
-		rawField, ok := refMap["field"]
-		if !ok {
-			return "", false, nil
-		}
-		fieldName, ok := rawField.(string)
-		if !ok || fieldName == "" {
-			return "", false, fmt.Errorf("Invalid field reference")
-		}
-		parts := strings.Split(fieldName, ".")
-		if len(parts) == 1 {
-			if !isValidIdentifier(parts[0]) {
-				return "", false, fmt.Errorf("Invalid field reference: %s", fieldName)
-			}
-			return fmt.Sprintf("%s.%s", t.quoteIdentifier(tableAlias), t.quoteIdentifier(parts[0])), true, nil
-		}
-		if len(parts) == 2 {
-			if !isValidIdentifier(parts[0]) || !isValidIdentifier(parts[1]) {
-				return "", false, fmt.Errorf("Invalid field reference: %s", fieldName)
-			}
-			return "NULL", true, nil
-		}
-		return "", false, fmt.Errorf("Invalid field reference: %s", fieldName)
-	}
-
 	for field, cond := range where {
-		// Handle "or" logical operator — recursively process each sub-where
-		if field == "or" || field == "OR" {
-			if orList, ok := cond.([]interface{}); ok {
-				var orConditions []string
-				for _, item := range orList {
-					if itemMap, ok := item.(map[string]interface{}); ok {
-						subConds, subArgs, err := t.processWhere(itemMap, tableAlias)
-						if err != nil {
-							return nil, nil, err
-						}
-						if len(subConds) > 0 {
-							orConditions = append(orConditions, "("+strings.Join(subConds, " AND ")+")")
-							args = append(args, subArgs...)
-						}
-					}
-				}
-				if len(orConditions) > 0 {
-					conditions = append(conditions, "("+strings.Join(orConditions, " OR ")+")")
-				}
-			}
-			continue
+		logicalConds, logicalArgs, handled, err := t.processLogical(field, cond, tableAlias)
+		if err != nil {
+			return nil, nil, err
 		}
-
-		// Handle "and" logical operator — recursively process each sub-where
-		if field == "and" || field == "AND" {
-			if andList, ok := cond.([]interface{}); ok {
-				for _, item := range andList {
-					if itemMap, ok := item.(map[string]interface{}); ok {
-						subConds, subArgs, err := t.processWhere(itemMap, tableAlias)
-						if err != nil {
-							return nil, nil, err
-						}
-						if len(subConds) > 0 {
-							conditions = append(conditions, "("+strings.Join(subConds, " AND ")+")")
-							args = append(args, subArgs...)
-						}
-					}
-				}
-			}
-			continue
-		}
-
-		// Handle "not" logical operator — recursively process the sub-where and negate
-		if field == "not" || field == "NOT" {
-			if notMap, ok := cond.(map[string]interface{}); ok {
-				subConds, subArgs, err := t.processWhere(notMap, tableAlias)
-				if err != nil {
-					return nil, nil, err
-				}
-				if len(subConds) > 0 {
-					conditions = append(conditions, "NOT ("+strings.Join(subConds, " AND ")+")")
-					args = append(args, subArgs...)
-				}
-			}
+		if handled {
+			conditions = append(conditions, logicalConds...)
+			args = append(args, logicalArgs...)
 			continue
 		}
 
@@ -569,150 +511,213 @@ func (t *Transpiler) processWhere(where map[string]interface{}, tableAlias strin
 			return nil, nil, fmt.Errorf("Invalid field name in where clause: %s", field)
 		}
 
-		if valMap, ok := cond.(map[string]interface{}); ok {
-			handled := false
-			if v, ok := valMap["eq"]; ok {
-				handled = true
-				if rhs, isRef, err := resolveFieldRef(v); err != nil {
-					return nil, nil, err
-				} else if isRef {
-					conditions = append(conditions, fmt.Sprintf("%s.%s = %s", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field), rhs))
-					goto eqDone
-				}
-				if v == nil {
-					conditions = append(conditions, fmt.Sprintf("%s.%s IS NULL", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
-				} else {
-					conditions = append(conditions, fmt.Sprintf("%s.%s = ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
-					args = append(args, v)
-				}
-			eqDone:
-			}
-			if v, ok := valMap["neq"]; ok {
-				handled = true
-				if rhs, isRef, err := resolveFieldRef(v); err != nil {
-					return nil, nil, err
-				} else if isRef {
-					conditions = append(conditions, fmt.Sprintf("%s.%s != %s", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field), rhs))
-				} else if v == nil {
-					conditions = append(conditions, fmt.Sprintf("%s.%s IS NOT NULL", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
-				} else {
-					conditions = append(conditions, fmt.Sprintf("%s.%s != ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
-					args = append(args, v)
-				}
-			} else if v, ok := valMap["ne"]; ok {
-				handled = true
-				if rhs, isRef, err := resolveFieldRef(v); err != nil {
-					return nil, nil, err
-				} else if isRef {
-					conditions = append(conditions, fmt.Sprintf("%s.%s != %s", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field), rhs))
-				} else if v == nil {
-					conditions = append(conditions, fmt.Sprintf("%s.%s IS NOT NULL", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
-				} else {
-					conditions = append(conditions, fmt.Sprintf("%s.%s != ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
-					args = append(args, v)
-				}
-			}
-			if v, ok := valMap["gt"]; ok {
-				handled = true
-				if rhs, isRef, err := resolveFieldRef(v); err != nil {
-					return nil, nil, err
-				} else if isRef {
-					conditions = append(conditions, fmt.Sprintf("%s.%s > %s", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field), rhs))
-				} else {
-					conditions = append(conditions, fmt.Sprintf("%s.%s > ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
-					args = append(args, v)
-				}
-			}
-			if v, ok := valMap["gte"]; ok {
-				handled = true
-				if rhs, isRef, err := resolveFieldRef(v); err != nil {
-					return nil, nil, err
-				} else if isRef {
-					conditions = append(conditions, fmt.Sprintf("%s.%s >= %s", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field), rhs))
-				} else {
-					conditions = append(conditions, fmt.Sprintf("%s.%s >= ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
-					args = append(args, v)
-				}
-			}
-			if v, ok := valMap["lt"]; ok {
-				handled = true
-				if rhs, isRef, err := resolveFieldRef(v); err != nil {
-					return nil, nil, err
-				} else if isRef {
-					conditions = append(conditions, fmt.Sprintf("%s.%s < %s", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field), rhs))
-				} else {
-					conditions = append(conditions, fmt.Sprintf("%s.%s < ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
-					args = append(args, v)
-				}
-			}
-			if v, ok := valMap["lte"]; ok {
-				handled = true
-				if rhs, isRef, err := resolveFieldRef(v); err != nil {
-					return nil, nil, err
-				} else if isRef {
-					conditions = append(conditions, fmt.Sprintf("%s.%s <= %s", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field), rhs))
-				} else {
-					conditions = append(conditions, fmt.Sprintf("%s.%s <= ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
-					args = append(args, v)
-				}
-			}
-			if v, ok := valMap["like"]; ok {
-				handled = true
-				conditions = append(conditions, fmt.Sprintf("%s.%s LIKE ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
-				args = append(args, v)
-			}
-			if v, ok := valMap["in"]; ok {
-				handled = true
-				if slice, ok := v.([]interface{}); ok && len(slice) > 0 {
-					placeholders := make([]string, len(slice))
-					for i := range slice {
-						placeholders[i] = "?"
-						args = append(args, slice[i])
-					}
-					conditions = append(conditions, fmt.Sprintf("%s.%s IN (%s)", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field), strings.Join(placeholders, ", ")))
-				}
-			}
-			if v, ok := valMap["nin"]; ok {
-				handled = true
-				if slice, ok := v.([]interface{}); ok && len(slice) > 0 {
-					placeholders := make([]string, len(slice))
-					for i := range slice {
-						placeholders[i] = "?"
-						args = append(args, slice[i])
-					}
-					conditions = append(conditions, fmt.Sprintf("%s.%s NOT IN (%s)", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field), strings.Join(placeholders, ", ")))
-				}
-			}
-			if v, ok := valMap["contains"]; ok {
-				handled = true
-				conditions = append(conditions, fmt.Sprintf("%s.%s LIKE ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
-				args = append(args, fmt.Sprintf("%%%v%%", v))
-			}
-			if v, ok := valMap["starts"]; ok {
-				handled = true
-				conditions = append(conditions, fmt.Sprintf("%s.%s LIKE ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
-				args = append(args, fmt.Sprintf("%v%%", v))
-			}
-			if v, ok := valMap["ends"]; ok {
-				handled = true
-				conditions = append(conditions, fmt.Sprintf("%s.%s LIKE ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
-				args = append(args, fmt.Sprintf("%%%v", v))
-			}
-			if !handled && len(valMap) > 0 {
-				for op := range valMap {
-					return nil, nil, fmt.Errorf("Unknown operator \"%s\" for field \"%s\"", op, field)
-				}
-			}
-		} else {
-			if cond == nil {
-				conditions = append(conditions, fmt.Sprintf("%s.%s IS NULL", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
-			} else {
-				conditions = append(conditions, fmt.Sprintf("%s.%s = ?", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field)))
-				args = append(args, cond)
-			}
+		fieldConds, fieldArgs, err := t.processFieldCondition(field, cond, tableAlias)
+		if err != nil {
+			return nil, nil, err
+		}
+		conditions = append(conditions, fieldConds...)
+		args = append(args, fieldArgs...)
+	}
+	return conditions, args, nil
+}
+
+// processLogical handles or/and/not. Returns handled=true when the key was
+// recognised as a logical operator.
+func (t *Transpiler) processLogical(field string, cond interface{}, tableAlias string) ([]string, []interface{}, bool, error) {
+	switch strings.ToLower(field) {
+	case "or":
+		conds, args, err := t.processLogicalList(cond, tableAlias, " OR ", true)
+		return conds, args, true, err
+	case "and":
+		conds, args, err := t.processLogicalList(cond, tableAlias, " AND ", false)
+		return conds, args, true, err
+	case "not":
+		notMap, ok := cond.(map[string]interface{})
+		if !ok {
+			return nil, nil, true, nil
+		}
+		subConds, subArgs, err := t.processWhere(notMap, tableAlias)
+		if err != nil {
+			return nil, nil, true, err
+		}
+		if len(subConds) == 0 {
+			return nil, nil, true, nil
+		}
+		return []string{"NOT (" + strings.Join(subConds, " AND ") + ")"}, subArgs, true, nil
+	}
+	return nil, nil, false, nil
+}
+
+// processLogicalList handles the array body of an `or` / `and` clause.
+// When `wrap` is true the result is wrapped as a single OR group; otherwise
+// each sub-where becomes its own AND-group condition.
+func (t *Transpiler) processLogicalList(cond interface{}, tableAlias, sep string, wrap bool) ([]string, []interface{}, error) {
+	list, ok := cond.([]interface{})
+	if !ok {
+		return nil, nil, nil
+	}
+	var groups []string
+	var args []interface{}
+	for _, item := range list {
+		itemMap, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		subConds, subArgs, err := t.processWhere(itemMap, tableAlias)
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(subConds) == 0 {
+			continue
+		}
+		groups = append(groups, "("+strings.Join(subConds, " AND ")+")")
+		args = append(args, subArgs...)
+	}
+	if len(groups) == 0 {
+		return nil, nil, nil
+	}
+	if wrap {
+		return []string{"(" + strings.Join(groups, sep) + ")"}, args, nil
+	}
+	return groups, args, nil
+}
+
+// processFieldCondition builds conditions for a single field key, handling
+// both operator-map values and implicit equality.
+func (t *Transpiler) processFieldCondition(field string, cond interface{}, tableAlias string) ([]string, []interface{}, error) {
+	quotedField := fmt.Sprintf("%s.%s", t.quoteIdentifier(tableAlias), t.quoteIdentifier(field))
+
+	valMap, ok := cond.(map[string]interface{})
+	if !ok {
+		sql, args := t.implicitEq(quotedField, cond)
+		return []string{sql}, args, nil
+	}
+
+	var conditions []string
+	var args []interface{}
+	handled := false
+	for op, v := range valMap {
+		sql, opArgs, ok, err := t.buildOperator(quotedField, op, v, tableAlias)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !ok {
+			continue
+		}
+		handled = true
+		if sql != "" {
+			conditions = append(conditions, sql)
+		}
+		args = append(args, opArgs...)
+	}
+	if !handled && len(valMap) > 0 {
+		for op := range valMap {
+			return nil, nil, fmt.Errorf("Unknown operator \"%s\" for field \"%s\"", op, field)
 		}
 	}
 	return conditions, args, nil
+}
+
+// buildOperator dispatches a single operator. Returns ok=false if op is unknown.
+// sql=="" with ok=true means the operator was recognised but produced no clause
+// (e.g. empty `in` array).
+func (t *Transpiler) buildOperator(quotedField, op string, value interface{}, tableAlias string) (string, []interface{}, bool, error) {
+	if sqlOp, isCmp := comparisonOps[op]; isCmp {
+		sql, args, err := t.buildComparison(quotedField, sqlOp, value, tableAlias)
+		return sql, args, true, err
+	}
+	if op == "in" || op == "nin" {
+		sql, args := t.buildInClause(quotedField, value, op == "nin")
+		return sql, args, true, nil
+	}
+	if patternFn, isLike := likeOps[op]; isLike {
+		sql, args := t.buildLikeClause(quotedField, patternFn(value))
+		return sql, args, true, nil
+	}
+	if op == "like" {
+		sql, args := t.buildLikeClause(quotedField, value)
+		return sql, args, true, nil
+	}
+	return "", nil, false, nil
+}
+
+// buildComparison emits a comparison clause, handling NULL, field-refs and
+// parameterised values uniformly.
+func (t *Transpiler) buildComparison(quotedField, sqlOp string, value interface{}, tableAlias string) (string, []interface{}, error) {
+	rhs, isRef, err := t.resolveFieldRef(value, tableAlias)
+	if err != nil {
+		return "", nil, err
+	}
+	if isRef {
+		return fmt.Sprintf("%s %s %s", quotedField, sqlOp, rhs), nil, nil
+	}
+	if value == nil {
+		if sqlOp == "!=" {
+			return fmt.Sprintf("%s IS NOT NULL", quotedField), nil, nil
+		}
+		return fmt.Sprintf("%s IS NULL", quotedField), nil, nil
+	}
+	return fmt.Sprintf("%s %s ?", quotedField, sqlOp), []interface{}{value}, nil
+}
+
+func (t *Transpiler) buildInClause(quotedField string, value interface{}, negated bool) (string, []interface{}) {
+	slice, ok := value.([]interface{})
+	if !ok || len(slice) == 0 {
+		return "", nil
+	}
+	placeholders := make([]string, len(slice))
+	args := make([]interface{}, len(slice))
+	for i, v := range slice {
+		placeholders[i] = "?"
+		args[i] = v
+	}
+	op := "IN"
+	if negated {
+		op = "NOT IN"
+	}
+	return fmt.Sprintf("%s %s (%s)", quotedField, op, strings.Join(placeholders, ", ")), args
+}
+
+func (t *Transpiler) buildLikeClause(quotedField string, pattern interface{}) (string, []interface{}) {
+	return fmt.Sprintf("%s LIKE ?", quotedField), []interface{}{pattern}
+}
+
+func (t *Transpiler) implicitEq(quotedField string, value interface{}) (string, []interface{}) {
+	if value == nil {
+		return fmt.Sprintf("%s IS NULL", quotedField), nil
+	}
+	return fmt.Sprintf("%s = ?", quotedField), []interface{}{value}
+}
+
+// resolveFieldRef detects { "field": "name" } RHS values referring to another
+// column. Returns (sqlExpr, isRef, error).
+func (t *Transpiler) resolveFieldRef(value interface{}, tableAlias string) (string, bool, error) {
+	refMap, ok := value.(map[string]interface{})
+	if !ok {
+		return "", false, nil
+	}
+	rawField, ok := refMap["field"]
+	if !ok {
+		return "", false, nil
+	}
+	fieldName, ok := rawField.(string)
+	if !ok || fieldName == "" {
+		return "", false, fmt.Errorf("Invalid field reference")
+	}
+	parts := strings.Split(fieldName, ".")
+	switch len(parts) {
+	case 1:
+		if !isValidIdentifier(parts[0]) {
+			return "", false, fmt.Errorf("Invalid field reference: %s", fieldName)
+		}
+		return fmt.Sprintf("%s.%s", t.quoteIdentifier(tableAlias), t.quoteIdentifier(parts[0])), true, nil
+	case 2:
+		if !isValidIdentifier(parts[0]) || !isValidIdentifier(parts[1]) {
+			return "", false, fmt.Errorf("Invalid field reference: %s", fieldName)
+		}
+		return "NULL", true, nil
+	}
+	return "", false, fmt.Errorf("Invalid field reference: %s", fieldName)
 }
 
 func (t *Transpiler) replacePlaceholders(sql string) string {
