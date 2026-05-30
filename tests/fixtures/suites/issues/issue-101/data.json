@@ -1,7 +1,0 @@
-{
-  "widgets": [
-    { "id": 1, "name": "Gear", "properties": { "teeth": 10, "material": "steel" } },
-    { "id": 2, "name": "Spring", "properties": { "k": 5.5, "material": "steel" } },
-    { "id": 3, "name": "NullProp", "properties": null }
-  ]
-}
