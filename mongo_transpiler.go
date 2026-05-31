@@ -2,6 +2,7 @@ package jsonql
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -415,21 +416,21 @@ func (t *MongoTranspiler) processWhere(where map[string]interface{}) (map[string
 			if v, ok := valMap["contains"]; ok {
 				handled = true
 				if s, ok := v.(string); ok {
-					mongoOp["$regex"] = s
+					mongoOp["$regex"] = regexp.QuoteMeta(s)
 					mongoOp["$options"] = "i"
 				}
 			}
 			if v, ok := valMap["starts"]; ok {
 				handled = true
 				if s, ok := v.(string); ok {
-					mongoOp["$regex"] = "^" + s
+					mongoOp["$regex"] = "^" + regexp.QuoteMeta(s)
 					mongoOp["$options"] = "i"
 				}
 			}
 			if v, ok := valMap["ends"]; ok {
 				handled = true
 				if s, ok := v.(string); ok {
-					mongoOp["$regex"] = s + "$"
+					mongoOp["$regex"] = regexp.QuoteMeta(s) + "$"
 					mongoOp["$options"] = "i"
 				}
 			}
