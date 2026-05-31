@@ -105,6 +105,37 @@ func TestMongoTranspiler_WhereLike(t *testing.T) {
 	}
 }
 
+func TestMongoTranspiler_ContainsEscapesRegexMeta(t *testing.T) {
+	mt := jsonql.NewMongoTranspiler()
+	cases := []struct {
+		op   string
+		in   string
+		want string
+	}{
+		{"contains", "a.b*", "a\\.b\\*"},
+		{"starts", "a.", "^a\\."},
+		{"ends", ".b", "\\.b$"},
+	}
+	for _, c := range cases {
+		q := &jsonql.JSONQLQuery{
+			Where: map[string]interface{}{
+				"name": map[string]interface{}{c.op: c.in},
+			},
+		}
+		result, err := mt.Transpile(q, "users")
+		if err != nil {
+			t.Fatalf("%s: unexpected error: %v", c.op, err)
+		}
+		nameFilter, ok := result.Filter["name"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("%s: expected map filter on name, got %T", c.op, result.Filter["name"])
+		}
+		if got := nameFilter["$regex"]; got != c.want {
+			t.Errorf("%s: expected $regex %q, got %q", c.op, c.want, got)
+		}
+	}
+}
+
 func TestMongoTranspiler_Sort(t *testing.T) {
 	mt := jsonql.NewMongoTranspiler()
 	q := &jsonql.JSONQLQuery{
