@@ -415,24 +415,30 @@ func (t *MongoTranspiler) processWhere(where map[string]interface{}) (map[string
 			}
 			if v, ok := valMap["contains"]; ok {
 				handled = true
-				if s, ok := v.(string); ok {
-					mongoOp["$regex"] = regexp.QuoteMeta(s)
-					mongoOp["$options"] = "i"
+				s, ok := v.(string)
+				if !ok {
+					return nil, fmt.Errorf("\"contains\" operator for field \"%s\" requires a string value", field)
 				}
+				mongoOp["$regex"] = regexp.QuoteMeta(s)
+				mongoOp["$options"] = "i"
 			}
 			if v, ok := valMap["starts"]; ok {
 				handled = true
-				if s, ok := v.(string); ok {
-					mongoOp["$regex"] = "^" + regexp.QuoteMeta(s)
-					mongoOp["$options"] = "i"
+				s, ok := v.(string)
+				if !ok {
+					return nil, fmt.Errorf("\"starts\" operator for field \"%s\" requires a string value", field)
 				}
+				mongoOp["$regex"] = "^" + regexp.QuoteMeta(s)
+				mongoOp["$options"] = "i"
 			}
 			if v, ok := valMap["ends"]; ok {
 				handled = true
-				if s, ok := v.(string); ok {
-					mongoOp["$regex"] = regexp.QuoteMeta(s) + "$"
-					mongoOp["$options"] = "i"
+				s, ok := v.(string)
+				if !ok {
+					return nil, fmt.Errorf("\"ends\" operator for field \"%s\" requires a string value", field)
 				}
+				mongoOp["$regex"] = regexp.QuoteMeta(s) + "$"
+				mongoOp["$options"] = "i"
 			}
 			if !handled && len(valMap) > 0 {
 				for op := range valMap {
